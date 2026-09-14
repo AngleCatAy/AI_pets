@@ -200,7 +200,8 @@ async function pushPetSettings() {
     provider: provider,
     autoPopMs: autoPopMs,
     openAtLogin: isOpenAtLogin(),
-    apiKey: readApiKeyFromFile(),
+    // 当前厂商的凭据（字段名保持 apiKey，值随厂商变：DeepSeek 的 Key 或 GLM 的令牌）
+    apiKey: readCredential(provider),
   }
   // 贴图/配色立即切到位：不然要等余额接口回来（1~2 秒）才换皮，能看见旧角色闪一下
   try {
@@ -380,17 +381,30 @@ async function pollBalanceForTray() {
 // 这里只负责读写 config.json 的 apiKey 字段，其余字段原样保留。
 // ---------------------------------------------------------------------------
 
-function readApiKeyFromFile() {
+// ---------------------------------------------------------------------------
+// 凭据读写（按厂商分开存）
+//
+// DeepSeek 的 Key 存 config.json 的 apiKey；GLM 的令牌存 providers.glm.planToken。
+// 菜单最底下那一行是「当前厂商的凭据」——切到 GLM 就该填 GLM 令牌。
+// 之前这一行无论什么厂商都读写成 apiKey，于是切到 GLM 会看到 DeepSeek 的 Key，
+// 填进去还会把 DeepSeek 的 Key 覆盖掉（两个厂商共用一个值）。
+// ---------------------------------------------------------------------------
+
+function readCredential(provider) {
   try {
     const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^\uFEFF/, ''))
+    if (provider === 'glm') {
+      const t = cfg && cfg.providers && cfg.providers.glm && cfg.providers.glm.planToken
+      return typeof t === 'string' ? t.trim() : ''
+    }
     return cfg && typeof cfg.apiKey === 'string' ? cfg.apiKey.trim() : ''
   } catch (err) {
     return ''
   }
 }
 
-// 只改 apiKey，配置文件里其它字段原样保留
-function writeApiKey(key) {
+// 只改当前厂商对应的那个字段，配置文件里其它字段原样保留
+function writeCredential(provider, key) {
   let cfg = {}
   try {
     const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^\uFEFF/, ''))
@@ -398,10 +412,23 @@ function writeApiKey(key) {
   } catch (err) {
     cfg = {}
   }
-  cfg.apiKey = String(key || '').trim()
+  const value = String(key || '').trim()
+  if (provider === 'glm') {
+    if (!cfg.providers || typeof cfg.providers !== 'object') cfg.providers = {}
+    if (!cfg.providers.glm || typeof cfg.providers.glm !== 'object') cfg.providers.glm = {}
+    cfg.providers.glm.planToken = value
+  } else {
+    cfg.apiKey = value
+  }
   fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true })
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), 'utf8')
-  return cfg.apiKey
+  return value
+}
+
+// 当前厂商以服务端配置为准（它才是权威来源，页面上的状态可能还没刷新）
+async function currentProvider() {
+  const cfg = await readServerConfig()
+  return cfg && cfg.provider === 'glm' ? 'glm' : 'deepseek'
 }
 
 // ---------------------------------------------------------------------------
@@ -473,17 +500,20 @@ ipcMain.on('pet:set-provider', (event, provider) => {
     .catch((err) => log('切换厂商异常 ' + err.message))
 })
 
-// 菜单最底部那行 API Key。只记长度，不要把 Key 本身写进日志。
-ipcMain.on('pet:set-api-key', (event, key) => {
+// 菜单最底部那行凭据（DeepSeek 的 API Key 或 GLM 的令牌，按当前厂商落在不同字段）。
+// 只记长度和厂商，不要把凭据本身写进日志。
+ipcMain.on('pet:set-api-key', async (event, key) => {
   try {
-    const saved = writeApiKey(key)
-    log('已更新 API Key（长度 ' + saved.length + '）')
-    // 再推一次设置：让菜单那行按新状态收起或展开（配好了就收起来，避免误触）
+    const provider = await currentProvider()
+    const saved = writeCredential(provider, key)
+    log('已更新 ' + (provider === 'glm' ? 'GLM 令牌' : 'API Key') + '（长度 ' + saved.length + '）')
+    // 再推一次设置：让菜单那行按新状态收起或展开（配好了就收起来，避免误触），
+    // 并按当前厂商刷新那一行的标题
     pushPetSettings()
-    // 让挂件立刻按新 Key 拉一次余额（等价于左键点一下鲸鱼）
+    // 让挂件立刻按新凭据拉一次数据（等价于左键点一下角色）
     applySetting('refresh', true)
   } catch (err) {
-    log('保存 API Key 失败 ' + err.message)
+    log('保存凭据失败 ' + err.message)
   }
 })
 

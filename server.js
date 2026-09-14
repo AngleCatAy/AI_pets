@@ -624,7 +624,10 @@ async function getBalancePayload() {
 //   todayUsage    <- 周窗已用百分比（提示行，前缀为「周配额已用」）
 async function getGlmQuotaPayload() {
   const r = await fetchGlmQuota()
-  if (!r.ok) return r
+  // 失败也要带上厂商标识：挂件靠响应里的 provider 判断当前是哪个厂商
+  // （没配令牌时这个响应里原本什么都没有，挂件就会以为自己在 DeepSeek 模式，
+  //   于是时段文案、怪话过滤、用量行全按 DeepSeek 走）。
+  if (!r.ok) return { ...r, provider: 'glm', providerLabel: 'GLM余额' }
   const now = Date.now()
   return {
     ok: true,

@@ -35,7 +35,7 @@
 - **模型**：DeepSeek / GLM 一键切换，贴图和配色跟着换
 - **自动冒泡**：每隔一段时间主动说一句（关闭 / 5 / 15 / 30 分钟 / 1 / 2 小时）
 - **开机自启**
-- **API Key**：用来拉取余额数据。
+- **凭据**（菜单最底部那一行）：填的是**当前厂商的**凭据——DeepSeek 模式填 API Key，GLM 模式填 Coding Plan 令牌（原样粘贴，**不要加 `Bearer` 前缀**）。两个厂商的凭据分开存，互不覆盖
 
 ## 功能
 
@@ -56,10 +56,10 @@
 第一次打开时角色会出现在桌面右下角，气泡里提示「未配置」。填 Key 的方法：
 
 1. 把鼠标移到角色身上，头部一旁会出现一个菜单按钮
-2. 左键点它打开菜单，最底部一行就是 **API Key**
+2. 左键点它打开菜单，最底部一行就是填凭据的地方（DeepSeek 显示 `API Key`，GLM 显示 `GLM 令牌`）
 3. 填进去按回车（或点别处）立即生效
 
-DeepSeek 的 Key 在 https://platform.deepseek.com/api_keys 申请。
+DeepSeek 的 Key 在 https://platform.deepseek.com/api_keys 申请；GLM 用的是 Coding Plan 的令牌，**原样粘贴、不要加 `Bearer` 前缀**。
 
 ### 从源码跑
 
@@ -96,5 +96,3 @@ MIT，见 [LICENSE](LICENSE)。
 原始授权见 [LICENSE-MeteorNOX](LICENSE-MeteorNOX)。
 
 GLM 配额接口与峰谷规则参考官方插件 [zai-org/zai-coding-plugins](https://github.com/zai-org/zai-coding-plugins)。
-
-

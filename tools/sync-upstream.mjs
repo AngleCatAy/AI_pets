@@ -91,6 +91,10 @@ const PATCHES = [
         '  applyProvider: function (p) {',
         '    try {',
         "      var want = p === 'glm' ? 'glm' : 'deepseek'",
+        '      // 厂商是「设置」，不是余额响应的副产品。在这里登记成权威值，供时段文案、',
+        '      // 怪话过滤、用量行分支读取。放在幂等判断之前：即使贴图那套因为重复调用',
+        '      // 被跳过，这个状态也永远是对的。',
+        '      state.provider = want',
         '      if (want === appliedProvider) return true',
         '      appliedProvider = want',
         "      var bust = '/dsh-whale/image.png?p=' + want + '-' + Date.now()",
@@ -229,10 +233,11 @@ const PATCHES = [
         "      head.style.margin = '0'",
         "      head.style.cursor = 'pointer'",
         '      var tri = makeCollapseTri()',
+        '      var lbl = menuLabel(labelText)',
         '      head.appendChild(tri)',
-        "      head.appendChild(menuLabel(labelText))",
+        '      head.appendChild(lbl)',
         '      row.appendChild(head)',
-        "      return { row: row, head: head, tri: tri }",
+        "      return { row: row, head: head, tri: tri, label: lbl }",
         '    }',
         '',
         '    // —— 模型（折叠栏，默认收起：切换是低频操作，收起来防误触）——',
@@ -306,7 +311,18 @@ const PATCHES = [
         '    window.__dshWhalePetSettings = function (s) {',
         '      try {',
         '        if (!s) return',
-        "        if (typeof s.provider === 'string') providerSelect.value = s.provider",
+        "        if (typeof s.provider === 'string') {",
+        "          // 最底下那行填的是「当前厂商的凭据」：GLM 要的是 Coding Plan 令牌，",
+        "          // 不是 DeepSeek 的 API Key，所以标题和占位符都跟着换；",
+        "          // 值本身由主进程按厂商读写对应字段（apiKey / providers.glm.planToken）。",
+        "          var isGlm = s.provider === 'glm'",
+        "          providerSelect.value = s.provider",
+        "          if (apiCtl.label) apiCtl.label.textContent = isGlm ? 'GLM 令牌' : 'API Key'",
+        "          apiKeyInput.placeholder = isGlm ? '粘贴令牌' : 'sk-...'",
+        "          apiKeyInput.title = isGlm",
+        "            ? 'GLM Coding Plan 令牌（原样粘贴，不要加 Bearer 前缀）；填完按回车生效，只存在本机'",
+        "            : 'DeepSeek API Key；填完按回车（或点别处）生效，只存在本机'",
+        '        }',
         "        if (typeof s.autoPopMs === 'number') autoPopSelect.value = String(s.autoPopMs)",
         "        if (typeof s.openAtLogin === 'boolean') openAtLoginToggle.checked = s.openAtLogin",
         "        if (typeof s.apiKey === 'string') {",
@@ -340,10 +356,9 @@ const PATCHES = [
   {
     from: '        state.todayUsage = data.todayUsage !== undefined ? data.todayUsage : null',
     to: '        state.todayUsage = data.todayUsage !== undefined ? data.todayUsage : null\n' +
-      "        state.provider = data.provider === 'glm' ? 'glm' : 'deepseek'\n" +
-      "        state.providerLabel = String(data.providerLabel || 'DeepSeek 余额')\n" +
       "        state.usageLabel = String(data.usageLabel || '今日已用')",
-    why: 'v2.0 多厂商：从 balance.json 读取厂商、厂商标签与用量前缀',
+    why: 'v2.0 多厂商：从 balance.json 读取用量前缀（provider 的唯一来源是 applyProvider；' +
+      'providerLabel 在 ok 判断之前读——见各自补丁）',
   },
   {
     from: "    hint = '今日已用 ' + (state.todayUsage !== null && state.todayUsage !== undefined ? fmt(state.todayUsage, state.currency) : '--')",
@@ -358,9 +373,11 @@ const PATCHES = [
   {
     // 余额响应里带 provider，拿到就自应用一次贴图/配色——这样浏览器标签页模式
     // 也能自动换皮（那边没有桌宠适配器可以代为调用）。
+    // 必须判 data.provider 存在：错误响应（比如 GLM 没配令牌）里没有这个字段，
+    // 无条件调用会把 applyProvider 里的权威状态误判回 deepseek。
     from: "        state.usageLabel = String(data.usageLabel || '今日已用')",
     to: "        state.usageLabel = String(data.usageLabel || '今日已用')\n" +
-      "        if (window.__dshWhaleApi && window.__dshWhaleApi.applyProvider) {\n" +
+      "        if (data.provider && window.__dshWhaleApi && window.__dshWhaleApi.applyProvider) {\n" +
       "          window.__dshWhaleApi.applyProvider(data.provider)\n" +
       "        }",
     why: 'v2.0 多厂商：按余额响应里的厂商自动换贴图与配色（标签页模式也生效）',
@@ -540,6 +557,41 @@ const PATCHES = [
       '  return pool[pool.length - 1].lines()\n' +
       '}',
     why: 'v2.0：抽签池按厂商过滤，DeepSeek 的怪话与动图不在 GLM 模式下出现',
+  },
+  {
+    // 厂商存在服务端配置里，是「设置」而不是余额响应的副产品。挂件启动时会拉一次
+    // size.json 回显设置，顺手把厂商也读下来并应用——于是厂商的来源不再依赖
+    // balance.json 里有没有 provider 字段。
+    // 这条修的是一个实测 bug：GLM 没配令牌时余额接口返回的是错误对象（里面没有
+    // provider），state.provider 就退回 deepseek，导致时段文案、怪话过滤、用量行
+    // 全按 DeepSeek 走（切到 GLM 还能看到 DeepSeek 的怪话和动图）。
+    from: "    if (d && typeof d.peakMode === 'string') {\n" +
+      "      peakMode = d.peakMode === 'liangwen' || d.peakMode === 'qiangqiang' ? d.peakMode : 'default'\n" +
+      '      peakSelect.value = peakMode\n' +
+      '    }',
+    to: "    if (d && typeof d.peakMode === 'string') {\n" +
+      "      peakMode = d.peakMode === 'liangwen' || d.peakMode === 'qiangqiang' ? d.peakMode : 'default'\n" +
+      '      peakSelect.value = peakMode\n' +
+      '    }\n' +
+      "    if (d && typeof d.provider === 'string') {\n" +
+      "      state.provider = d.provider === 'glm' ? 'glm' : 'deepseek'\n" +
+      '      if (window.__dshWhaleApi && window.__dshWhaleApi.applyProvider) {\n' +
+      '        window.__dshWhaleApi.applyProvider(d.provider)\n' +
+      '      }\n' +
+      '    }',
+    why: 'v2.0 多厂商：厂商改从 size.json（设置）读取并应用，不再依赖余额响应里有没有 provider',
+  },
+  {
+    // 首行文案属于「设置」层面，不是「数据」层面：搬数据失败时（比如 GLM 还没配令牌）
+    // 服务端也会把 providerLabel 一起返回，所以必须放在 ok 判断之前读。
+    // 否则切到 GLM 又拉不到配额时，气泡首行会一直停在「DeepSeek 余额」（用户实测到的 bug）。
+    from: '      if (data && data.ok) {',
+    to: '      // 首行文案按厂商定，与这次数据拉没拉到无关\n' +
+      "      if (data && typeof data.providerLabel === 'string') {\n" +
+      '        state.providerLabel = data.providerLabel\n' +
+      '      }\n' +
+      '      if (data && data.ok) {',
+    why: 'v2.0 多厂商：气泡首行文案改在 ok 判断之前读，失败响应也能正确显示厂商名',
   },
 ]
 

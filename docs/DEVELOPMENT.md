@@ -51,6 +51,17 @@ ds_pet/
 
 另外输入框聚焦时会全选已有内容——否则用户直接打字会把新 Key 插进旧 Key 中间，拼出一个坏值（踩过）。
 
+### 凭据是怎么存的（按厂商分开）
+
+| 厂商 | 存在哪 | 形式 |
+|---|---|---|
+| DeepSeek | `config.json` 的 `apiKey` | API Key，发请求时加 `Bearer` |
+| GLM | `config.json` 的 `providers.glm.planToken` | Coding Plan 令牌，**裸 token，不加 `Bearer`** |
+
+菜单最底部那一行填的是「**当前厂商的**凭据」：`adapter.js` 把值交给主进程，主进程用 `currentProvider()`（读服务端配置，这是权威来源）决定写哪个字段，再把该字段的值推回页面回显，那一行的标题和占位符也跟着厂商换（`API Key` ↔ `GLM 令牌`）。
+
+两个凭据分开存、互不覆盖——**别把它们并成一个字段**，否则切到 GLM 会看到 DeepSeek 的 Key，填进去还会把 DeepSeek 的 Key 覆盖掉。
+
 ## `lib/widget.js` 是生成物，不要手改
 
 它由 `tools/sync-upstream.mjs` 从上游 `lib/index.js` 里的 `WIDGET_JS` 模板字符串抽取 + 打补丁生成：
@@ -67,7 +78,7 @@ node tools/sync-upstream.mjs --fetch   # 先重新下载上游再抽取
 // 需要改多处时加 count: 2
 ```
 
-补丁**必须精确命中**，命中数不符直接报错——这是防止上游更新后补丁静默失效。目前 **25 处**（以脚本末尾打印的 `补丁数` 为准），分组如下：
+补丁**必须精确命中**，命中数不符直接报错——这是防止上游更新后补丁静默失效。目前 **27 处**（以脚本末尾打印的 `补丁数` 为准），分组如下：
 
 | 补丁 | 条数 | 原因 |
 |---|---|---|
@@ -78,6 +89,7 @@ node tools/sync-upstream.mjs --fetch   # 先重新下载上游再抽取
 | 多厂商：加 `applyProvider` 调用、`provider`/`providerLabel`/`usageLabel` 数据驱动、百分比显示、`render()` 同步标签 | 8 | 支持 DeepSeek ↔ GLM 切换，换贴图 / 换配色，气泡文案随厂商变 |
 | 多厂商：时段台词按厂商分支（GLM 固定「空闲 / 高峰时段」并去掉用量行，`peakMode` 只作用于 DeepSeek） | 2 | 峰谷文案与「周配额已用」不该跨模型串到 GLM 上 |
 | 多厂商：台词组标 `ds: true` + `pickRandomLines()` 按厂商过滤抽签池 | 6 | GLM 暂时没有自己的台词池：DeepSeek 的怪话与动图都不该在 GLM 下出现 |
+| 多厂商：厂商改从 `size.json`（设置）读取；首行文案在 `ok` 判断之前读 | 2 | GLM 未配令牌时余额接口返回的是错误对象（里面没有 `provider`），原来会让状态退回 DeepSeek，导致气泡文案、时段文案、怪话过滤全错 |
 | 台词组归属调整（「好女孩...↓」与「压力一只蓝色大肥鱼？！」对调） | 2 | 调整这两句各自的出现概率 |
 | 菜单入口可见性与可点性：加白描边 + 投影、直连 hover、给菜单控件放行 click | 3 | 深色按钮压深色贴图上会隐形；按钮压在贴图不透明像素上时 click 会被角色区域的拦截吞掉 |
 
