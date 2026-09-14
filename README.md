@@ -1,6 +1,6 @@
 # 小鲸鱼余额桌宠
 
-常驻 Windows 桌面的小挂件，一抬眼就能看到大模型平台的余额 / 配额。
+常驻 Windows 桌面的小挂件，一抬眼就能看到大模型平台的余额 / 配额，目前仅支持windows操作系统。
 
 <p align="center">
   <img src="assets/DSniang1.png" width="150" alt="DeepSeek 模式">
