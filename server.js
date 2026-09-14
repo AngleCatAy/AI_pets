@@ -591,12 +591,17 @@ async function getBalancePayload() {
   // 多厂商分发：GLM 走配额，DeepSeek 走余额
   if (currentProvider() === 'glm') return getGlmQuotaPayload()
   const payload = await fetchBalance()
-  if (!payload.ok) return payload
+  // 失败也要带厂商标识：挂件靠它们决定气泡首行文案。少一个字段的话，
+  // 从 GLM 切回来时标签会一直停在「GLM余额」（用户实测到的 bug）。
+  if (!payload.ok) {
+    return { ...payload, provider: 'deepseek', providerLabel: 'DeepSeek 余额' }
+  }
   // 无论哪种模式，都先把余额观测记入账本（自动累积「鲸鱼记账」数据）
   const led = recordLedgerUsage(Number(payload.totalBalance), payload.currency)
   const cfg = readSizeConfig() || {}
   const mode = normalizeUsageMode(cfg.usageMode)
-  const full = { ...payload, provider: 'deepseek' }
+  // providerLabel / usageLabel 两个厂商都给全，保持响应形状一致
+  const full = { ...payload, provider: 'deepseek', providerLabel: 'DeepSeek 余额', usageLabel: '今日已用' }
   full.isPeak = isPeakTime(Math.floor(Date.now() / 1000))
   if (mode === 'ledger') {
     full.todayUsage = led.todayUsage

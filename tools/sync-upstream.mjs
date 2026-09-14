@@ -583,15 +583,19 @@ const PATCHES = [
   },
   {
     // 首行文案属于「设置」层面，不是「数据」层面：搬数据失败时（比如 GLM 还没配令牌）
-    // 服务端也会把 providerLabel 一起返回，所以必须放在 ok 判断之前读。
-    // 否则切到 GLM 又拉不到配额时，气泡首行会一直停在「DeepSeek 余额」（用户实测到的 bug）。
+    // 服务端也会把厂商信息一起返回，所以必须放在 ok 判断之前读。
+    // 判断依据用 data.provider（两个厂商的响应都会带），providerLabel 缺失时退回该厂商
+    // 的默认文案——不能只依赖 providerLabel 是否存在：DeepSeek 的响应原本不带这个字段，
+    // 于是从 GLM 切回 DeepSeek 后标签会一直停在「GLM余额」（用户实测到的 bug）。
     from: '      if (data && data.ok) {',
     to: '      // 首行文案按厂商定，与这次数据拉没拉到无关\n' +
-      "      if (data && typeof data.providerLabel === 'string') {\n" +
-      '        state.providerLabel = data.providerLabel\n' +
+      '      if (data && data.provider) {\n' +
+      "        state.providerLabel = (typeof data.providerLabel === 'string' && data.providerLabel)\n" +
+      '          ? data.providerLabel\n' +
+      "          : (data.provider === 'glm' ? 'GLM余额' : 'DeepSeek 余额')\n" +
       '      }\n' +
       '      if (data && data.ok) {',
-    why: 'v2.0 多厂商：气泡首行文案改在 ok 判断之前读，失败响应也能正确显示厂商名',
+    why: 'v2.0 多厂商：首行文案在 ok 判断之前按厂商定，缺失 providerLabel 时用厂商默认文案兜底',
   },
 ]
 
