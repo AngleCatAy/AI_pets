@@ -27,11 +27,16 @@ const IGNORE = [
   /^\/config\.json$/,
   /^\/config\.json\.example$/,
   /^\/\.gitignore$/,
+  /^\/\.gitattributes$/,
   /^\/README\.md$/,
+  // 开发向的文档不该进包（用户向的说明是自动生成的「使用说明.txt」）
+  /^\/docs($|\/)/,
   // 内部交接笔记和开发脚本不该发给朋友（HANDOFF.md 里写着工作约定和排查过程，
   // draw_glm.py 是画贴图用的脚本，都不参与运行）
   /^\/HANDOFF\.md$/,
   /^\/draw_glm\.py$/,
+  // 注意：LICENSE / LICENSE-MeteorNOX 故意**不**排除。MIT 要求分发副本时
+  // 一并带上许可声明，所以它们应该跟着 exe 一起发出去，别"顺手"加进这里。
   /^\/package-lock\.json$/,
   /^\/lib\/widget\.js\.map$/,
   // 这两个启动器是开发用的，在包里跑不起来（它们指向 node_modules 里的
