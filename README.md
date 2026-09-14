@@ -1,4 +1,4 @@
-# 小鲸鱼余额桌宠
+# AI余额桌宠
 
 常驻 Windows 桌面的小挂件，一抬眼就能看到大模型平台的余额 / 配额，目前仅支持windows操作系统。
 
@@ -17,7 +17,7 @@
 | 峰谷规则 | 工作日 9–12、14–18 为高峰 | 工作日 14:00–18:00 为高峰，其余含周末全天为谷 |
 | 需要填 | API Key（`sk-xxxx`） | Coding Plan 令牌 |
 
-不需要装 DSH 或任何宿主环境：本地自带一个零依赖的 Node 服务，双击就能跑。
+不需要装 DSH 或任何宿主环境。
 
 ## 怎么用
 
@@ -35,7 +35,7 @@
 - **模型**：DeepSeek / GLM 一键切换，贴图和配色跟着换
 - **自动冒泡**：每隔一段时间主动说一句（关闭 / 5 / 15 / 30 分钟 / 1 / 2 小时）
 - **开机自启**
-- **API Key**：填空了才能拉数据，填完按回车生效
+- **API Key**：用来拉取余额数据。
 
 ## 功能
 
@@ -49,15 +49,15 @@
 
 ## 安装
 
-### 直接用打包好的（推荐）
+### 发行版
 
-到 [Releases](https://github.com/AngleCatAy/AI_pets/releases) 下载 zip → 解压 → 双击 `DeepSeekPet.exe`。**不需要装 Node，也不需要装 Electron。**
+到 [Releases](https://github.com/AngleCatAy/AI_pets/releases) 下载 zip → 解压 → 双击 `DeepSeekPet.exe`。
 
 第一次打开时角色会出现在桌面右下角，气泡里提示「未配置」。填 Key 的方法：
 
-1. 把鼠标移到角色身上，头部一旁会出现一个蓝色按钮
+1. 把鼠标移到角色身上，头部一旁会出现一个菜单按钮
 2. 左键点它打开菜单，最底部一行就是 **API Key**
-3. 填进去按回车（或点别处），余额立刻就出来了
+3. 填进去按回车（或点别处）立即生效
 
 DeepSeek 的 Key 在 https://platform.deepseek.com/api_keys 申请。
 
@@ -71,14 +71,12 @@ start.cmd            :: 或者只要浏览器标签页模式
 
 ## 配置
 
-打包版把配置放在 `%APPDATA%\ds-pet\config.json`；源码运行则放在项目根目录的 `config.json`（可复制 `config.json.example` 改）。**也可以完全不碰文件——菜单最底部那一行就能填。**
+打包版把配置放在 `%APPDATA%\ds-pet\config.json`；源码运行则放在项目根目录的 `config.json`（可复制 `config.json.example` 改）。**推荐使用桌宠自带菜单填入**
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `apiKey` | 是 | DeepSeek API Key，拉余额用 |
 | `platformToken` | 否 | `platform.deepseek.com` 的网页会话令牌。只有把用量模式切到「实时·令牌」才需要，留空会自动回落到本地记账 |
 | `providers.glm.planToken` | 否 | GLM Coding Plan 令牌（原样粘贴，**不要加 `Bearer` 前缀**） |
-| `host` / `port` | 否 | 默认 `127.0.0.1:3080`，只监听本机 |
 
 也可以用环境变量 `DEEPSEEK_API_KEY` / `DEEPSEEK_PLATFORM_TOKEN` / `GLM_PLAN_TOKEN`，优先级高于配置文件。
 
@@ -87,7 +85,7 @@ start.cmd            :: 或者只要浏览器标签页模式
 - 窗口是**置顶**的，会浮在全屏视频 / 游戏之上；不想要时右键托盘 → 隐藏
 - **只覆盖主显示器的**工作区，多显示器下角色只能在主屏活动
 - 「每轮对话消耗」还没接通（需要额外一层本地反向代理）
-- GLM 模式暂时没有自己的台词池，点气泡只会显示时段提示
+- GLM 模式暂时没有自己的彩蛋池，点气泡仅显示时段提示
 
 ## 许可
 
@@ -99,6 +97,4 @@ MIT，见 [LICENSE](LICENSE)。
 
 GLM 配额接口与峰谷规则参考官方插件 [zai-org/zai-coding-plugins](https://github.com/zai-org/zai-coding-plugins)。
 
----
 
-想改代码、自己打包，或者想搞清楚挂件前端为什么是「生成物」，见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
