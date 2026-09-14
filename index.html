@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小鲸鱼余额桌宠</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #14161c;
+    color: #8b93a7;
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    overflow: hidden;
+  }
+  .hint {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    max-width: 460px;
+    user-select: none;
+  }
+  .hint h1 {
+    font-size: 17px;
+    font-weight: 600;
+    color: #c8d0e0;
+    margin: 0 0 10px;
+  }
+  .hint p { margin: 6px 0; }
+  .hint code {
+    background: #1e2128;
+    border: 1px solid #2b303b;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    color: #9fb3d1;
+  }
+  .hint .dim { font-size: 12px; color: #5d6579; }
+</style>
+</head>
+<body>
+
+<div class="hint">
+  <h1>🐋 小鲸鱼在右下角</h1>
+  <p>拖动它换个位置，悬停右上角有菜单。</p>
+  <p class="dim">余额每 60 秒自动刷新，点鲸鱼可手动刷新。</p>
+  <p class="dim">当前页面只是个容器，挂件本体在 <code>/dsh-whale/widget.js</code>。</p>
+</div>
+
+<script defer src="/dsh-whale/widget.js"></script>
+</body>
+</html>

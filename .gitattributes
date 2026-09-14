@@ -1,0 +1,19 @@
+# 注意顺序：git 里「最后匹配的规则生效」，所以通配规则必须写在前面、
+# 具体规则写在后面，否则通配会把这些特例全部盖掉。
+#
+# 这个项目对两个文件类型有硬性要求（见 README「启动脚本的写法约束」）：
+#   .cmd 在 cmd.exe 下必须是 CRLF（LF 会导致 for /f 之类语句解析错误）
+#   .ps1 必须是 CRLF + UTF-8 BOM（否则 PowerShell 5.1 按 ANSI 解码，中文乱码）
+# 显式钉住 eol=crlf，这样无论谁的本机 core.autocrlf 设成什么，
+# clone / checkout 出来的这两个类型一定是对的。
+* text=auto eol=lf
+
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制资源，明确声明避免任何形式的转换
+*.png binary
+*.gif binary
+*.mp3 binary
+*.ico binary
+*.zip binary

@@ -1,0 +1,23 @@
+# 本地敏感配置（含 API Key），不要提交
+config.json
+
+# 运行时数据（尺寸记忆、记账账本）
+data/
+
+# 上游参考源码缓存
+_ref/
+
+node_modules/
+
+# 打包产物
+dist/
+
+# 内部交接笔记：写给下一个开发会话的工作笔记（含排查过程和工作约定），不对外发布
+HANDOFF.md
+
+# 根目录的草稿/参考图和画图脚本。app 运行时用的是 assets/personas/glm/ 里那一份，
+# 这几个是作图时的中间产物（想一并开源作图流程的话，删掉下面四行即可）
+/glm.png
+/glm3.png
+/手绘草图.png
+/draw_glm.py

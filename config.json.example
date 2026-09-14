@@ -1,0 +1,19 @@
+{
+  "_说明": "复制本文件为 config.json 并填入下面的值。也可以改用同名环境变量 DEEPSEEK_API_KEY / DEEPSEEK_PLATFORM_TOKEN（环境变量优先）。",
+
+  "apiKey": "",
+  "_apiKey": "DeepSeek 的 API Key，形如 sk-xxxx，从 https://platform.deepseek.com/api_keys 获取。DeepSeek 余额挂件靠它工作。",
+
+  "platformToken": "",
+  "_platformToken": "可选，留空即可。只有把菜单里的「用量」切到「实时·令牌」模式才需要。这是 platform.deepseek.com 的网页会话令牌，不是 API Key。留空时该模式会自动回落到小鲸鱼记账。",
+
+  "providers": {
+    "glm": {
+      "planToken": ""
+    }
+  },
+  "_planToken": "GLM Coding Plan 的令牌（open.bigmodel.cn 的 API Key，原样粘贴，不要加 Bearer 前缀）。v2.0 套餐用量显示用；留空则 GLM 相关功能不启用。",
+
+  "host": "127.0.0.1",
+  "port": 3080
+}
