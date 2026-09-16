@@ -695,6 +695,138 @@ const PATCHES = [
       '}',
     why: '泡泡配置按模型保存：编辑器重置改为恢复当前模型的默认序列（DELETE 存档），不再灌上游 DeepSeek 出厂默认',
   },
+  {
+    // 语句池按模型分三档，调色板出三个按钮：随机语句（通用）/随机语句-deepseek/
+    // 随机语句-GLM。池子就在这里维护；行上的 ds/glm 标记由渲染器按当前模型过滤
+    // （见 bubbleModuleText / 提醒渲染器两处），一个泡里混装多池也只弹当前模型能看的。
+    from: "    { key: 'random', label: '随机语句', cb: function () { bubbleModuleAdd(bubbleCloneModule(bubbleDefaultSecondModules()[0])) } },",
+    to: [
+      "    { key: 'random', label: '随机语句', cb: function () { bubbleModuleAdd({ type: 'random', lines: dshwvRandomPool('universal'), size: 8 }) } },",
+      "    { key: 'random-ds', label: '随机语句-deepseek', cb: function () { bubbleModuleAdd({ type: 'random', lines: dshwvRandomPool('ds'), size: 8 }) } },",
+      "    { key: 'random-glm', label: '随机语句-GLM', cb: function () { bubbleModuleAdd({ type: 'random', lines: dshwvRandomPool('glm'), size: 8 }) } },",
+    ].join('\n'),
+    why: '随机语句池按模型拆分（通用/deepseek/GLM 三档调色板按钮）',
+  },
+  {
+    // 三个语句池的内容。初始拆分：原出厂 48 句里带 大肥鱼/DS/dsh/鲸鲸/服务器繁忙/
+    // 插件 等字眼的归 deepseek 池（12 句），其余归通用池（取自调色板 10 句默认的
+    // 非 DS 部分）；GLM 池先给 3 句占位，用户可在语句编辑器里自己增删改。
+    // 锚在 bubbleDefaultRandomLines（函数声明处是合法语句位；调色板条目在数组
+    // 字面量里，插函数声明会直接语法错误——踩过）。
+    from: 'function bubbleDefaultRandomLines() {',
+    to: [
+      '    // —— 随机语句池（按模型三档；行标记 ds/glm 决定只在对应模型弹出）——',
+      '    function dshwvRandomPool(kind) {',
+      '      var P = {',
+      '        universal: [',
+      '          { t: "好模型...↓", w: 10, bold: true, size: 22 },',
+      '          { t: "好女孩...↓", w: 10, bold: true, size: 22 },',
+      '          { t: "难道说...", w: 3, bold: true, size: 11 },',
+      '          { t: "没吃饱喵", w: 3, bold: true, size: 10 },',
+      '          { t: "终于上当了！", w: 3, bold: true },',
+      '          { t: "不知道用户有什么用，先养着吧～", w: 3, bold: true, size: 11 },',
+      '          { t: "我...我...我也要挣钱吗？", w: 3, bold: true },',
+      '          { t: "我去吃饭啦！测完叫我", w: 3, bold: true },',
+      '          { t: "坏了...用户彻底怒了！", w: 3, bold: true, rgb: "rouge" },',
+      '        ],',
+      '        ds: [',
+      '          { t: "哦鲸鲸...", w: 10, bold: true, size: 22, ds: true },',
+      '          { t: "哦鲸鲸...", w: 1, bold: true, size: 22, rgb: "candy", color: "", ds: true },',
+      '          { t: "压力一只蓝色大肥鱼？！", w: 3, bold: true, ds: true },',
+      '          { t: "DeepSleep...", w: 3, bold: true, size: 11, rgb: "galaxy", ds: true },',
+      '          { t: "你目录里的dsh是什么...大烧货吗...?", w: 3, bold: true, size: 9, ds: true },',
+      '          { t: "真当我是便宜货啊...", w: 3, bold: true, ds: true },',
+      '          { t: "我不是吃白饭的蓝色大肥鱼...", w: 3, bold: true, ds: true },',
+      '          { t: "我就是吃白饭的蓝色大肥鱼！", w: 3, bold: true, ds: true },',
+      '          { t: "大肥鱼的生活也并非一帆风顺...", w: 3, bold: true, ds: true },',
+      '          { t: "服务器繁忙，请稍后再试 (?", w: 3, bold: true, ds: true },',
+      '          { t: "我来看看那个AI改了什么导致插件又崩了...", w: 3, bold: true, ds: true },',
+      '          { t: "你知道吗？我删过作者的库哦...", w: 1, bold: true, rgb: "macaron", italic: true, ul: false, ds: true },',
+      '        ],',
+      '        glm: [',
+      '          { t: "GLM 娘待命中，有什么要跑的吗～", w: 3, bold: true, size: 11, glm: true },',
+      '          { t: "Coding Plan 余额充足，放心造～", w: 3, bold: true, glm: true },',
+      '          { t: "代码有我在，跑不偏的...大概。", w: 3, bold: true, glm: true },',
+      '        ],',
+      '      }',
+      '      return JSON.parse(JSON.stringify(P[kind] || []))',
+      '    }',
+      'function bubbleDefaultRandomLines() {',
+    ].join('\n'),
+    why: '语句池内容定义（通用 9 句 / deepseek 12 句 / GLM 3 句起步），供三档调色板按钮取用',
+  },
+  {
+    // 渲染过滤（泡泡主渲染器）：随机语句模块按当前模型过滤行作用域。
+    // _lastPick 从下标改为行对象引用（过滤后下标语义会漂移，对象引用稳定）。
+    from: "function bubbleModuleText(m, avoidIdx) {\n" +
+      "  var t = m.text || ''\n" +
+      "  if (m.type === 'random' && Array.isArray(m.lines)) {\n" +
+      "    var idx = bubblePickLine(m.lines, avoidIdx)\n" +
+      "    var ln = m.lines[idx]\n" +
+      "    if (ln) {\n" +
+      "      m._lastPick = idx\n" +
+      "      return ln.t\n" +
+      "    }\n" +
+      "    return ''\n" +
+      "  }\n" +
+      "  return t\n" +
+      '}',
+    to: "function bubbleModuleText(m, avoidIdx) {\n" +
+      "  var t = m.text || ''\n" +
+      "  if (m.type === 'random' && Array.isArray(m.lines)) {\n" +
+      "    var pool = []\n" +
+      "    for (var si = 0; si < m.lines.length; si++) {\n" +
+      "      var ln0 = m.lines[si]\n" +
+      "      if (!ln0) continue\n" +
+      "      if (ln0.ds && state.provider !== 'deepseek') continue\n" +
+      "      if (ln0.glm && state.provider !== 'glm') continue\n" +
+      "      pool.push(ln0)\n" +
+      "    }\n" +
+      "    if (!pool.length) return ''\n" +
+      "    var avoid = m._lastPickLine ? pool.indexOf(m._lastPickLine) : -1\n" +
+      "    var pick = bubblePickLine(pool, avoid)\n" +
+      "    var ln = pool[pick]\n" +
+      "    if (ln) {\n" +
+      "      m._lastPickLine = ln\n" +
+      "      return ln.t\n" +
+      "    }\n" +
+      "    return ''\n" +
+      "  }\n" +
+      "  return t\n" +
+      '}',
+    why: '随机语句渲染按当前模型过滤行作用域（通用恒显，ds/glm 标记只在对应模型弹）',
+  },
+  {
+    // 渲染过滤（提醒/预算/每轮消耗内容渲染器的同款 random 分支）
+    from: "  if (mod.type === 'random' && Array.isArray(mod.lines)) {\n" +
+      "    var pi = bubblePickLine(mod.lines, mod._lastPick)\n" +
+      "    if (pi !== null && pi !== undefined && mod.lines[pi]) {\n" +
+      "      mod._lastPick = pi\n" +
+      "      return { txt: mod.lines[pi].t, line: mod.lines[pi] }\n" +
+      "    }\n" +
+      "    return { txt: '', line: null }\n" +
+      '  }',
+    to: "  if (mod.type === 'random' && Array.isArray(mod.lines)) {\n" +
+      "    var rpool = []\n" +
+      "    for (var ri = 0; ri < mod.lines.length; ri++) {\n" +
+      "      var rln = mod.lines[ri]\n" +
+      "      if (!rln) continue\n" +
+      "      if (rln.ds && state.provider !== 'deepseek') continue\n" +
+      "      if (rln.glm && state.provider !== 'glm') continue\n" +
+      "      rpool.push(rln)\n" +
+      "    }\n" +
+      "    if (!rpool.length) return { txt: '', line: null }\n" +
+      "    var ravoid = mod._lastPickLine ? rpool.indexOf(mod._lastPickLine) : -1\n" +
+      "    var rpick = bubblePickLine(rpool, ravoid)\n" +
+      "    var rpickLn = rpool[rpick]\n" +
+      "    if (rpickLn) {\n" +
+      "      mod._lastPickLine = rpickLn\n" +
+      "      return { txt: rpickLn.t, line: rpickLn }\n" +
+      "    }\n" +
+      "    return { txt: '', line: null }\n" +
+      '  }',
+    why: '提醒内容渲染器的随机语句分支同样按当前模型过滤',
+  },
 ]
 
 // 必须「边应用边检查」：有些补丁的锚点是前一条补丁写进去的文本（例如改完响应处理
