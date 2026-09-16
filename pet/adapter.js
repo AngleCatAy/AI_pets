@@ -92,8 +92,50 @@
     }
   }
 
+  // 上游 0.3.0 加了一大批弹层 UI（余额预警/预算/每轮消耗编辑器 .dshwv-usage-mask、
+  // 泡泡编辑器 .dshwv-bubmask、资源管理 .dshwv-resmask、吸附设置 .dshwv-snapmask、
+  // 删除确认 .dshwv-confirmmask、悬浮快捷编辑 .dshwv-qedit、音频/角色下拉等）。
+  // 逐个记类名迟早漏。挂件所有 UI 的类名都以 dshwv- 开头，所以这里直接用浏览器
+  // 自己的命中测试：elementFromPoint 命中任何 dshwv- 元素（贴图本体除外——
+  // 贴图要走上面的像素级 alpha 判定，透明像素必须穿透）就算落在挂件 UI 上。
+  // 菜单/菜单按钮/气泡也自然被覆盖（关着时它们 display:none 或 pointer-events:none，
+  // elementFromPoint 不会返回）。
+  function overWidgetUi(x, y) {
+    try {
+      var el = document.elementFromPoint(x, y)
+      if (!el || !el.closest) return false
+      var hit = el.closest('[class*="dshwv-"]')
+      if (!hit) return false
+      if (hit.classList.contains('dshwv-root')) return false
+      if (hit.classList.contains('dshwv-img')) return false
+      return true
+    } catch (err) {
+      return false
+    }
+  }
+
   function interactiveAt(x, y) {
-    return overMenu(x, y) || overMenuBtn(x, y) || overBubbleShape(x, y) || isWhaleHit(x, y)
+    return overWidgetUi(x, y) || overMenu(x, y) || overMenuBtn(x, y) || overBubbleShape(x, y) || isWhaleHit(x, y)
+  }
+
+  // 模态弹层是否打开（不依赖坐标）：遮罩类 UI 有两种实现——有的常驻 DOM 靠
+  // display:none 切换，有的每次打开才 createElement、关闭时移除。所以判定
+  // 统一为「在文档里 + display 不是 none + 有尺寸」。
+  var MODAL_SELECTORS =
+    '.dshwv-usage-mask,.dshwv-bubmask,.dshwv-resmask,.dshwv-snapmask,' +
+    '.dshwv-confirmmask,.dshwv-qedit,.dshwv-audiolist,.dshwv-rolelist'
+
+  function anyModalOpen() {
+    try {
+      var els = document.querySelectorAll(MODAL_SELECTORS)
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i]
+        if (!el.parentNode) continue
+        if (el.style.display === 'none') continue
+        if (el.offsetWidth > 0 || el.offsetHeight > 0) return true
+      }
+    } catch (err) {}
+    return false
   }
 
   // -------------------------------------------------------------------------
@@ -121,15 +163,25 @@
       bubble: overBubbleShape(x, y),
       menu: overMenu(x, y),
       btn: overMenuBtn(x, y),
+      widgetUi: overWidgetUi(x, y),
+      modal: anyModalOpen(),
       mask: maskReady,
     })
   }
 
+  var lastPoint = null
   function update(x, y) {
+    lastPoint = { x: x, y: y }
     reportHit(x, y)
     // 按住鼠标期间绝不切成穿透：快速拖拽时鲸鱼有 transition 动画会落在
     // 光标后面，按像素判定会中途"丢失"命中，导致 pointerup 收不到、鲸鱼卡住
     if (pointing) {
+      setIgnore(false)
+      return
+    }
+    // 模态弹层（编辑器/资源管理/删除确认…）打开时整窗可交互：这些遮罩盖全屏，
+    // 里面全是按钮和输入框，逐像素判定会让"点按钮/点关闭"穿透到桌面，卡死在里面
+    if (anyModalOpen()) {
       setIgnore(false)
       return
     }
@@ -305,19 +357,28 @@
   setInterval(report, 5000)
   setTimeout(report, 1500)
 
-  // 菜单里有文本输入框（API Key），而窗口默认 focusable:false —— 那种窗口
-  // 永远拿不到键盘焦点，输入框就是打不进字。所以菜单开合时临时把窗口切成
-  // 可聚焦，关掉菜单再切回来，这样"点鲸鱼不抢你当前应用焦点"的默认行为不变。
+  // 菜单和模态弹层里都有文本输入框，而窗口默认 focusable:false —— 那种窗口
+  // 永远拿不到键盘焦点，输入框就是打不进字。所以「菜单或任何弹层打开」期间
+  // 临时把窗口切成可聚焦，全部关掉再切回来，这样"点鲸鱼不抢你当前应用焦点"
+  // 的默认行为不变。
   var menuEl = document.querySelector('.dshwv-menu')
+  var lastFocusable = null
+  function refreshFocusable() {
+    var want = !!(menuEl && menuEl.classList.contains('dshwv-menu-open')) || anyModalOpen()
+    if (want === lastFocusable) return
+    lastFocusable = want
+    try {
+      host.setFocusable(want)
+    } catch (err) {}
+  }
+
   if (menuEl && window.MutationObserver) {
     var lastMenuOpen = false
     new MutationObserver(function () {
       var isOpen = menuEl.classList.contains('dshwv-menu-open')
+      refreshFocusable()
       if (isOpen === lastMenuOpen) return
       lastMenuOpen = isOpen
-      try {
-        host.setFocusable(isOpen)
-      } catch (err) {}
       if (!isOpen) return
       // 菜单刚打开、位置已定，这时记一次真实坐标（排查"点不到输入框"用）
       try {
@@ -336,6 +397,30 @@
         }
       } catch (err) {}
     }).observe(menuEl, { attributes: true, attributeFilter: ['class'] })
+  }
+
+  // 弹层的开合不走菜单那个 class 开关：有的靠 display 切换、有的整节点增删。
+  // 盯 body 的子树变化（防抖 60ms），弹层一打开就切可聚焦 + 立即取消穿透
+  // （不等 mousemove——打开弹层的那次点击之后鼠标可能不动）；
+  // 关掉后按最后已知指针位置重算穿透。
+  if (window.MutationObserver) {
+    var modalDebounce = null
+    var lastModalOpen = false
+    new MutationObserver(function () {
+      if (modalDebounce) return
+      modalDebounce = setTimeout(function () {
+        modalDebounce = null
+        var open = anyModalOpen()
+        refreshFocusable()
+        if (open === lastModalOpen) return
+        lastModalOpen = open
+        if (open) {
+          setIgnore(false)
+        } else if (lastPoint) {
+          update(lastPoint.x, lastPoint.y)
+        }
+      }, 60)
+    }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] })
   }
 
   // 记一次菜单入口的位置。菜单现在只有"左键点这个按钮"一条入口，按钮又只有
