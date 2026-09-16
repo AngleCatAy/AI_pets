@@ -58,6 +58,9 @@ const REQUIRED = [
   'pet/preload.cjs',
   'pet/adapter.js',
   'assets/DSniang1.png',
+  // exe 图标（由 tools/make-icon.cjs 从 DSniang1.png 生成）。漏了它打包不会报错，
+  // 只会静默用 Electron 默认图标 —— 这种静默失败正是白名单要拦的
+  'assets/icon.ico',
   // GLM 模式的贴图。漏了它会静默回落到鲸鱼（GLM 下人物不对），所以放进必需清单
   'assets/personas/glm/character.png',
   'assets/rua.gif',
@@ -103,6 +106,9 @@ const appPaths = await packager({
   name: 'DeepSeekPet',
   platform: 'win32',
   arch: 'x64',
+  // exe 图标：Windows 只认 .ico，由 tools/make-icon.cjs 从桌宠默认贴图
+  // （assets/DSniang1.png，大肥鱼）生成多尺寸版本
+  icon: path.join(ROOT, 'assets', 'icon.ico'),
   out: OUT,
   overwrite: true,
   // 不用 asar：桌宠主进程要动态 import 服务端模块，asar 里的 ESM 支持有坑；
