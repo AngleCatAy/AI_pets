@@ -364,6 +364,12 @@ async function pollBalanceForTray() {
   try {
     const res = await fetch(BASE + '/dsh-whale/balance.json')
     const d = await res.json()
+    // 纯桌宠模式没有余额：托盘只写模式名，别去显示「余额不可用」
+    if (d && d.provider === 'pet') {
+      balanceText = null
+      tray.setToolTip('小鲸鱼桌宠\n纯桌宠模式（不取余额）')
+      return
+    }
     if (d && d.ok) {
       balanceText = Number(d.totalBalance).toFixed(2) + ' ' + (d.currency || 'CNY')
       tray.setToolTip('小鲸鱼余额桌宠\n余额：' + balanceText)
@@ -392,6 +398,8 @@ async function pollBalanceForTray() {
 
 function readCredential(provider) {
   try {
+    // 纯桌宠模式不需要任何凭据（菜单里那一行也会隐藏）
+    if (normalizeProvider(provider) === 'pet') return ''
     const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^\uFEFF/, ''))
     if (provider === 'glm') {
       const t = cfg && cfg.providers && cfg.providers.glm && cfg.providers.glm.planToken
@@ -413,6 +421,8 @@ function writeCredential(provider, key) {
     cfg = {}
   }
   const value = String(key || '').trim()
+  // 纯桌宠模式没有凭据可写：直接忽略（避免误往某个槽位写空值/覆盖真实 key）
+  if (normalizeProvider(provider) === 'pet') return ''
   if (provider === 'glm') {
     if (!cfg.providers || typeof cfg.providers !== 'object') cfg.providers = {}
     if (!cfg.providers.glm || typeof cfg.providers.glm !== 'object') cfg.providers.glm = {}
@@ -425,10 +435,15 @@ function writeCredential(provider, key) {
   return value
 }
 
+// 厂商归一：deepseek / glm / pet（纯桌宠模式——不取余额、不需要 key）
+function normalizeProvider(v) {
+  return v === 'glm' ? 'glm' : v === 'pet' ? 'pet' : 'deepseek'
+}
+
 // 当前厂商以服务端配置为准（它才是权威来源，页面上的状态可能还没刷新）
 async function currentProvider() {
   const cfg = await readServerConfig()
-  return cfg && cfg.provider === 'glm' ? 'glm' : 'deepseek'
+  return normalizeProvider(cfg && cfg.provider)
 }
 
 // ---------------------------------------------------------------------------
@@ -485,7 +500,7 @@ ipcMain.on('pet:set-focusable', (event, on) => {
 
 // 多厂商切换：写入服务端配置，再让挂件立刻刷新一次（等价于左键点鲸鱼）
 ipcMain.on('pet:set-provider', (event, provider) => {
-  const value = provider === 'glm' ? 'glm' : 'deepseek'
+  const value = normalizeProvider(provider)
   fetch(BASE + '/dsh-whale/size.json', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -497,7 +512,10 @@ ipcMain.on('pet:set-provider', (event, provider) => {
         log('切换厂商失败', out && out.error)
         return
       }
-      log('当前厂商 -> ' + (value === 'glm' ? 'GLM Coding Plan' : 'DeepSeek'))
+      log(
+        '当前厂商 -> ' +
+          (value === 'glm' ? 'GLM Coding Plan' : value === 'pet' ? '纯桌宠模式' : 'DeepSeek'),
+      )
       // 先换贴图/配色再刷新数据，避免旧角色停留
       pushPetSettings()
       applySetting('refresh', true)
@@ -510,6 +528,7 @@ ipcMain.on('pet:set-provider', (event, provider) => {
 ipcMain.on('pet:set-api-key', async (event, key) => {
   try {
     const provider = await currentProvider()
+    if (provider === 'pet') return // 纯桌宠模式不用凭据
     const saved = writeCredential(provider, key)
     log('已更新 ' + (provider === 'glm' ? 'GLM 令牌' : 'API Key') + '（长度 ' + saved.length + '）')
     // 再推一次设置：让菜单那行按新状态收起或展开（配好了就收起来，避免误触），

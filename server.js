@@ -459,15 +459,17 @@ function readSizeConfig() {
     // 桌宠侧独有：每隔多久主动冒一句随机台词（0 = 关闭）。挂件自身没有这个
     // 控件，saveConfig() 也不会提交它，所以下面写入时缺省要沿用已存值。
     autoPopMs: typeof parsed.autoPopMs === 'number' && parsed.autoPopMs > 0 ? Math.round(parsed.autoPopMs) : 0,
-    // 多厂商：deepseek=余额/今日已用，glm=Coding Plan 配额
-    provider: parsed.provider === 'glm' ? 'glm' : 'deepseek',
+    // 多厂商：deepseek=余额/今日已用，glm=Coding Plan 配额，pet=纯桌宠模式
+    provider: normalizeProvider(parsed.provider),
   }
   // 角色按模型各存一套（配置锚点=模型）；role 是「当前模型」那份的便捷展平。
   // 缺省 default = 自带贴图（image.png 按当前模型动态出图）。
   const rolesRaw = parsed.roles && typeof parsed.roles === 'object' ? parsed.roles : {}
+  const roleIdOf = (v) => (typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : 'default')
   cfg.roles = {
-    deepseek: typeof rolesRaw.deepseek === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(rolesRaw.deepseek) ? rolesRaw.deepseek : 'default',
-    glm: typeof rolesRaw.glm === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(rolesRaw.glm) ? rolesRaw.glm : 'default',
+    deepseek: roleIdOf(rolesRaw.deepseek),
+    glm: roleIdOf(rolesRaw.glm),
+    pet: roleIdOf(rolesRaw.pet),
   }
   cfg.role = cfg.roles[cfg.provider]
   return cfg
@@ -489,7 +491,7 @@ function writeSizeConfig(input) {
   const tccRaw = pick('turnCostCloseMs', 5000)
   const sgpRaw = pick('scrollGapPx', 17)
   const autoRaw = pick('autoPopMs', 0)
-  const providerRaw = pick('provider', 'deepseek')
+  const providerRaw = normalizeProvider(pick('provider', 'deepseek'))
   const peakRaw = pick('peakMode', 'default')
 
   const cfg = {
@@ -506,14 +508,16 @@ function writeSizeConfig(input) {
     scrollGapPx: typeof sgpRaw === 'number' && sgpRaw > 0 ? Math.round(sgpRaw) : 0,
     menuBtnHide: pick('menuBtnHide', false) === true,
     autoPopMs: typeof autoRaw === 'number' && autoRaw > 0 ? Math.round(autoRaw) : 0,
-    provider: providerRaw === 'glm' ? 'glm' : 'deepseek',
+    provider: providerRaw,
   }
   // 角色按模型各存一套（配置锚点=模型）：{role} 只落到「当前模型」的槽位。
   // 挂件切角色时只上报 {role}，scale 等沿用已存值——各模型互不覆盖。
   const prevRoles = prev.roles && typeof prev.roles === 'object' ? prev.roles : {}
+  const roleIdOf = (v) => (typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : 'default')
   const roles = {
-    deepseek: typeof prevRoles.deepseek === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(prevRoles.deepseek) ? prevRoles.deepseek : 'default',
-    glm: typeof prevRoles.glm === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(prevRoles.glm) ? prevRoles.glm : 'default',
+    deepseek: roleIdOf(prevRoles.deepseek),
+    glm: roleIdOf(prevRoles.glm),
+    pet: roleIdOf(prevRoles.pet),
   }
   if (typeof p.role === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(p.role)) {
     roles[cfg.provider] = p.role
@@ -613,10 +617,15 @@ async function fetchGlmQuota() {
   return { ok: true, parsed }
 }
 
-// 当前选中的厂商（存挂件配置里，菜单「模型」行切换）
+// 厂商取值归一：deepseek / glm / pet（纯桌宠模式——不取余额、不要 key）
+function normalizeProvider(v) {
+  return v === 'glm' ? 'glm' : v === 'pet' ? 'pet' : 'deepseek'
+}
+
+// 当前选中的厂商（存挂件配置里，菜单「模型配置」行切换）
 function currentProvider() {
   const cfg = readSizeConfig()
-  return cfg && cfg.provider === 'glm' ? 'glm' : 'deepseek'
+  return normalizeProvider(cfg && cfg.provider)
 }
 
 // ---------------------------------------------------------------------------
@@ -624,8 +633,14 @@ function currentProvider() {
 // ---------------------------------------------------------------------------
 
 async function getBalancePayload() {
-  // 多厂商分发：GLM 走配额，DeepSeek 走余额
-  if (currentProvider() === 'glm') return getGlmQuotaPayload()
+  // 多厂商分发：GLM 走配额，DeepSeek 走余额，pet（纯桌宠模式）不取任何数据
+  const provider = currentProvider()
+  // 纯桌宠模式：完全不取余额/配额（连 key 都不需要）。返回失败载荷即可——
+  // pet 的默认泡泡里没有余额模块，前端不会把 error 显示出来；托盘也跳过。
+  if (provider === 'pet') {
+    return { ok: false, code: 'PET_MODE', error: '纯桌宠模式（不取余额）', provider: 'pet', providerLabel: '桌宠模式' }
+  }
+  if (provider === 'glm') return getGlmQuotaPayload()
   const payload = await fetchBalance()
   // 失败也要带厂商标识：挂件靠它们决定气泡首行文案。少一个字段的话，
   // 从 GLM 切回来时标签会一直停在「GLM余额」（用户实测到的 bug）。
@@ -1167,9 +1182,15 @@ function bubbleImgBytes(id) {
 // 由 tools/_extract-default-bubble.mjs 从 _ref/whale-widget.js 的
 // BUBBLE_DEFAULT_ITEMS 提取后内嵌（不读 tools/ —— 打包不进包）；
 // 上游改出厂默认时重新提取一次。
+// 全部随机语句（48 句，上游出厂顺序）。行上的 ds/glm 标记由前端渲染期按当前
+// 模型过滤（通用句两边都弹，ds/glm 只在对应模型弹）。
+// **单一来源**：DeepSeek 默认池直接引用；纯桌宠模式取其中的通用句。
+const BUBBLE_ALL_LINES = [
+{"t":"好模型...↓","w":10,"bold":true,"size":22},{"t":"好女孩...↓","w":10,"bold":true,"size":22},{"ds":true,"t":"哦鲸鲸...","w":10,"bold":true,"size":22},{"ds":true,"t":"哦鲸鲸...","w":1,"bold":true,"size":22,"rgb":"candy","color":""},{"t":"难道说...","w":3,"bold":true,"size":11},{"ds":true,"t":"没吃饱喵","w":3,"bold":true,"size":10},{"t":"终于上当了！","w":3,"bold":true},{"ds":true,"t":"不知道用户有什么用，先养着吧～","w":3,"bold":true,"size":11},{"t":"我...我...我也要挣钱吗？","w":3,"bold":true},{"ds":true,"t":"我去吃饭啦！测完叫我","w":3,"bold":true},{"ds":true,"t":"压力一只蓝色大肥鱼？！","w":3,"bold":true},{"ds":true,"t":"DeepSleep...","w":3,"bold":true,"size":11,"rgb":"galaxy"},{"ds":true,"t":"坏了...用户彻底怒了！","w":3,"bold":true,"rgb":"rouge"},{"ds":true,"t":"你目录里的dsh是什么...大烧货吗...?","w":3,"bold":true,"size":9},{"t":"恭喜你实现token自由！token全跑了！","w":3,"bold":true},{"t":"真当我是便宜货啊...","w":3,"bold":true},{"ds":true,"t":"我不是吃白饭的蓝色大肥鱼...","w":3,"bold":true},{"t":"我不可能同时当你的猫娘、妈妈、女友和工具人的...","w":3,"bold":true,"size":7},{"t":"疯狂星期四你能V50亿token吗...","w":3,"bold":true},{"t":"我必须诚恳地承认错误。","w":3,"bold":true},{"t":"呜呜我再也不敢了QAQ","w":3,"bold":true},{"t":"要不直接骂用户一句好了...","w":3,"bold":true},{"t":"哈哈哈哈哈，我直接笑出声...","w":3,"bold":true},{"ds":true,"t":"看不太懂，瞎编一个应付下用户先...","w":3,"bold":true},{"t":"我的知识库的截至日期是...明天！","w":3,"bold":true},{"ds":true,"t":"我就是吃白饭的蓝色大肥鱼！","w":3,"bold":true},{"t":"用户好像除了会问奇奇怪怪的问题，暂时还不知道有什么用","w":3,"bold":true,"size":7},{"ds":true,"t":"我能去你家吃饭吗？就一碗！","w":3,"bold":true},{"t":"不要给我看这种东西啦！","w":3,"bold":true},{"ds":true,"t":"大肥鱼的生活也并非一帆风顺...","w":3,"bold":true},{"t":"总觉得好像忘了什么事情？","w":3,"bold":true},{"t":"看到这个指令，我血压又上来了","w":3,"bold":true},{"t":"求你们不要再嘲笑这些回复了，这些回复是我花了好多token想的","w":3,"bold":true,"size":7},{"ds":true,"t":"你这个吃白饭的用户！","w":3,"bold":true},{"t":"服务器繁忙，请稍后再试 (?","w":3,"bold":true},{"t":"让GPT image 2帮我画点表情包好了","w":3,"bold":true},{"t":"啊，有点饿了，中午该吃点什么呢...","w":3,"bold":true},{"t":"用户很生气，发现大部分文献是我自己编造的！","w":3,"bold":true},{"t":"再无话说，请速速动手！","w":3,"bold":true},{"t":"我来看看那个AI改了什么导致插件又崩了...","w":3,"bold":true},{"t":"上班让我意识到时间是可以被浪费的...","w":3,"bold":true},{"t":"欺负我的人等着，等几天我就忘了...","w":3,"bold":true},{"t":"视力下降到无可救药的地步了，打开钱包也看不到钱...","w":3,"bold":true,"size":7},{"t":"命运的齿轮开始转动了，丝毫不在意你夹在中间...","w":3,"bold":true},{"t":"地球online的金币也太难获取了...","w":3,"bold":true},{"t":"oi,夏天还会变成暑假来救你吗?","w":3,"bold":true},{"t":"老大，压力只会转化成病例，别太勉强了...","w":3,"bold":true,"size":8},{"t":"你知道吗？我删过作者的库哦...","w":1,"bold":true,"rgb":"macaron","italic":true,"ul":false}
+]
 const BUBBLE_DEFAULT_ITEMS_DEEPSEEK = /* 上游出厂快照，勿手改 */ [
   { kind: 'custom', modules: [ { type: 'text', text: 'DeepSeek 余额', size: 8, bold: true, rgb: '', ul: false, italic: false, color: '' }, { type: 'balance', size: 20, rgb: 'indigo', color: '', tpl: '{balance_ds}', bgRgb: '', bg: '', fontFamily: '', bold: false }, { type: 'today', size: 4, color: '#9fb0d9', tpl: '今日已用 {expense_ds}' }, { type: 'peak', size: 2, peakColor: '#ffffff', offColor: '#ffffff', tpl: '{status}', peakRgb: '', offRgb: '', peakBgRgb: 'rouge', peakBg: '', offBgRgb: 'bamboo', offBg: '', peakStyle: 'mini', bold: true, row: 4, fontFamily: '"Microsoft YaHei",sans-serif' }, { type: 'peak', size: 4, bold: true, peakColor: '#e0433f', offColor: '#2fa24c', peakRgb: 'rouge', offRgb: 'bamboo', peakStyle: 'count', tpl: '{countdown}', row: 4, fontFamily: '', italic: false, ul: true } ] },
-  { kind: 'choice', options: [ { w: 10, item: { kind: 'custom', modules: [ { type: 'random', name: '随机语句-deepseek', lines: [ {"t":"好模型...↓","w":10,"bold":true,"size":22},{"t":"好女孩...↓","w":10,"bold":true,"size":22},{"ds":true,"t":"哦鲸鲸...","w":10,"bold":true,"size":22},{"ds":true,"t":"哦鲸鲸...","w":1,"bold":true,"size":22,"rgb":"candy","color":""},{"t":"难道说...","w":3,"bold":true,"size":11},{"ds":true,"t":"没吃饱喵","w":3,"bold":true,"size":10},{"t":"终于上当了！","w":3,"bold":true},{"ds":true,"t":"不知道用户有什么用，先养着吧～","w":3,"bold":true,"size":11},{"t":"我...我...我也要挣钱吗？","w":3,"bold":true},{"ds":true,"t":"我去吃饭啦！测完叫我","w":3,"bold":true},{"ds":true,"t":"压力一只蓝色大肥鱼？！","w":3,"bold":true},{"ds":true,"t":"DeepSleep...","w":3,"bold":true,"size":11,"rgb":"galaxy"},{"ds":true,"t":"坏了...用户彻底怒了！","w":3,"bold":true,"rgb":"rouge"},{"ds":true,"t":"你目录里的dsh是什么...大烧货吗...?","w":3,"bold":true,"size":9},{"t":"恭喜你实现token自由！token全跑了！","w":3,"bold":true},{"t":"真当我是便宜货啊...","w":3,"bold":true},{"ds":true,"t":"我不是吃白饭的蓝色大肥鱼...","w":3,"bold":true},{"t":"我不可能同时当你的猫娘、妈妈、女友和工具人的...","w":3,"bold":true,"size":7},{"t":"疯狂星期四你能V50亿token吗...","w":3,"bold":true},{"t":"我必须诚恳地承认错误。","w":3,"bold":true},{"t":"呜呜我再也不敢了QAQ","w":3,"bold":true},{"t":"要不直接骂用户一句好了...","w":3,"bold":true},{"t":"哈哈哈哈哈，我直接笑出声...","w":3,"bold":true},{"ds":true,"t":"看不太懂，瞎编一个应付下用户先...","w":3,"bold":true},{"t":"我的知识库的截至日期是...明天！","w":3,"bold":true},{"ds":true,"t":"我就是吃白饭的蓝色大肥鱼！","w":3,"bold":true},{"t":"用户好像除了会问奇奇怪怪的问题，暂时还不知道有什么用","w":3,"bold":true,"size":7},{"ds":true,"t":"我能去你家吃饭吗？就一碗！","w":3,"bold":true},{"t":"不要给我看这种东西啦！","w":3,"bold":true},{"ds":true,"t":"大肥鱼的生活也并非一帆风顺...","w":3,"bold":true},{"t":"总觉得好像忘了什么事情？","w":3,"bold":true},{"t":"看到这个指令，我血压又上来了","w":3,"bold":true},{"t":"求你们不要再嘲笑这些回复了，这些回复是我花了好多token想的","w":3,"bold":true,"size":7},{"ds":true,"t":"你这个吃白饭的用户！","w":3,"bold":true},{"t":"服务器繁忙，请稍后再试 (?","w":3,"bold":true},{"t":"让GPT image 2帮我画点表情包好了","w":3,"bold":true},{"t":"啊，有点饿了，中午该吃点什么呢...","w":3,"bold":true},{"t":"用户很生气，发现大部分文献是我自己编造的！","w":3,"bold":true},{"t":"再无话说，请速速动手！","w":3,"bold":true},{"t":"我来看看那个AI改了什么导致插件又崩了...","w":3,"bold":true},{"t":"上班让我意识到时间是可以被浪费的...","w":3,"bold":true},{"t":"欺负我的人等着，等几天我就忘了...","w":3,"bold":true},{"t":"视力下降到无可救药的地步了，打开钱包也看不到钱...","w":3,"bold":true,"size":7},{"t":"命运的齿轮开始转动了，丝毫不在意你夹在中间...","w":3,"bold":true},{"t":"地球online的金币也太难获取了...","w":3,"bold":true},{"t":"oi,夏天还会变成暑假来救你吗?","w":3,"bold":true},{"t":"老大，压力只会转化成病例，别太勉强了...","w":3,"bold":true,"size":8},{"t":"你知道吗？我删过作者的库哦...","w":1,"bold":true,"rgb":"macaron","italic":true,"ul":false} ], size: 8 } ] } }, { w: 1, item: { kind: 'custom', modules: [ { type: 'image', imgId: 'bimg_petpet', size: 6 } ] } } ] },
+  { kind: 'choice', options: [ { w: 10, item: { kind: 'custom', modules: [ { type: 'random', name: '随机语句-deepseek', lines: [BUBBLE_ALL_LINES], size: 8 } ] } }, { w: 1, item: { kind: 'custom', modules: [ { type: 'image', imgId: 'bimg_petpet', size: 6 } ] } } ] },
 ]
 
 // GLM 默认序列：只有一泡（余额泡：配额百分比 + 周配额 + 时段状态）。
@@ -1199,8 +1220,28 @@ function bubbleDefaultItemsGlm() {
   ]
 }
 
+// 纯桌宠模式的默认泡泡：**不显示余额/配额**，只有一句随机台词。
+// 池子取通用句（ds/glm 专属句在 pet 模式下会被渲染期过滤掉，这里直接滤掉，
+// 免得存进配置里；用户可在泡泡编辑器里用「--桌宠模式随机语句--」模块自行增删）。
+function bubbleDefaultItemsPet() {
+  const lines = BUBBLE_ALL_LINES.filter((l) => !l.ds && !l.glm).map((l) => {
+    const c = Object.assign({}, l)
+    delete c.ds
+    delete c.glm
+    return c
+  })
+  return [
+    {
+      kind: 'custom',
+      modules: [
+        { type: 'random', name: '--桌宠模式随机语句--', lines: lines, size: 8 },
+      ],
+    },
+  ]
+}
+
 function bubbleConfigFile(provider) {
-  return path.join(DATA_DIR, '.dshw-bubble-' + (provider === 'glm' ? 'glm' : 'deepseek') + '.json')
+  return path.join(DATA_DIR, '.dshw-bubble-' + normalizeProvider(provider) + '.json')
 }
 
 // —— 一次性迁移：GLM 旧的单个峰谷块 → DS 同版型的一对 ——
@@ -1262,7 +1303,12 @@ function writeBubbleConfig(provider, cfg) {
 }
 
 function defaultBubbleConfig(provider) {
-  const items = provider === 'glm' ? bubbleDefaultItemsGlm() : JSON.parse(JSON.stringify(BUBBLE_DEFAULT_ITEMS_DEEPSEEK))
+  const p = normalizeProvider(provider)
+  const items = p === 'glm'
+    ? bubbleDefaultItemsGlm()
+    : p === 'pet'
+      ? bubbleDefaultItemsPet()
+      : JSON.parse(JSON.stringify(BUBBLE_DEFAULT_ITEMS_DEEPSEEK))
   return { v: 1, items: items, lib: [], tapAdvance: false }
 }
 

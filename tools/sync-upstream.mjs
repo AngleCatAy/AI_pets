@@ -84,17 +84,18 @@ const PATCHES = [
         '    try {',
         '      if (!bubbleOn || costBubbleActive) return false',
         "      var isGlm = state.provider === 'glm'",
+        "      var isPet = state.provider === 'pet'",
         '      // 自动冒泡与点击泡泡共用同一份语句分类（DSHWV_LINES 的 ds/glm 标记）：',
         '      // 通用句两边都冒、DS 专属只在 DeepSeek、GLM 专属只在 GLM。',
         '      // 走模块渲染路径，行级字号/加粗/配色与点击泡泡里完全一致。',
         '      // 鲸鱼动图（rua.gif）是 DeepSeek 的素材，GLM 不放；出场概率沿用',
         '      // 老抽签池的比例（动图组权重 10 / 总权重 28）。',
-        '      if (!isGlm && Math.random() < (10 / 28)) {',
+        "      if (state.provider === 'deepseek' && Math.random() < (10 / 28)) {",
         '        bubbleRandomLines = { gif: true }',
         "        sceneOpen('random', function () { bubbleRenderRandom({ gif: true }) }, BUBBLE_MS)",
         '        return true',
         '      }',
-        "      var mod = { type: 'random', lines: dshwvRandomPool(isGlm ? 'glm' : 'ds'), size: 8 }",
+        "      var mod = { type: 'random', lines: dshwvRandomPool(isPet ? 'pet' : (isGlm ? 'glm' : 'ds')), size: 8 }",
         '      bubbleRandomLines = null // 模块路径：render() 的重绘分支不再碰老三行',
         "      sceneOpen('random', function () { bubbleRenderModules([mod]) }, BUBBLE_MS)",
         '      return true',
@@ -108,7 +109,7 @@ const PATCHES = [
         '  // 点击判定还按旧角色轮廓走（点新角色身上反而没反应）。',
         '  applyProvider: function (p) {',
         '    try {',
-        "      var want = p === 'glm' ? 'glm' : 'deepseek'",
+        "      var want = p === 'glm' ? 'glm' : (p === 'pet' ? 'pet' : 'deepseek')",
         '      // 厂商是「设置」，不是余额响应的副产品。在这里登记成权威值，供时段文案、',
         '      // 怪话过滤、用量行分支读取。放在幂等判断之前：即使贴图那套因为重复调用',
         '      // 被跳过，这个状态也永远是对的。',
@@ -121,7 +122,8 @@ const PATCHES = [
         '      try { loadBubbleCfg() } catch (err) {}',
         '      // 记账入口只对 DeepSeek 有意义（余额差记账）；GLM 是配额制，',
         '      // 整条底部动作行（小鲸鱼记账/返回）按厂商显隐。',
-        "      try { usageNavRow.style.display = want === 'glm' ? 'none' : '' } catch (err) {}",
+        "      // 记账只对 DeepSeek 有意义（GLM 是配额制、pet 是纯桌宠）",
+        "      try { usageNavRow.style.display = want === 'deepseek' ? '' : 'none' } catch (err) {}",
         '      // 贴图按「当前模型保存的角色」走（服务端权威，size.json 的 roles.<model>）：',
         '      // 切模型 = 应用该模型保存的角色；角色是 default（自带贴图）时带 cache-bust',
         '      // ——image.png 的内容随模型变了而 URL 没变，不加参数浏览器不会重拉。',
@@ -252,6 +254,7 @@ const PATCHES = [
       "    providerSelect.className = 'dshwv-sound'",
       "    providerSelect.appendChild(soundOpt('deepseek', 'DeepSeek'))",
       "    providerSelect.appendChild(soundOpt('glm', 'GLM'))",
+      "    providerSelect.appendChild(soundOpt('pet', '--纯桌宠模式--'))",
       "    providerSelect.style.display = 'none'",
       "    providerSelect.addEventListener('change', function () {",
       '      try { window.__dsPetHost.setProvider(providerSelect.value) } catch (err) {}',
@@ -284,12 +287,14 @@ const PATCHES = [
       '    modelKeyRow.appendChild(apiKeyInput)',
       '    modelCtl.row.appendChild(modelKeyRow)',
       "    modelKeyRow.style.display = 'none'",
+      "    // 纯桌宠模式不需要 key：整行隐藏（展开时也不显示）",
+      "    var isPetMode = false",
       '',
       '    // 用 var + 函数表达式而不是 function 声明：这段代码在 if 里的 try 块中，',
       '    // 块内的函数声明在严格/非严格模式下的提升行为不一样，不值得赌。',
       '    var setModelExpanded = function (on) {',
       "      providerSelect.style.display = on ? '' : 'none'",
-      "      modelKeyRow.style.display = on ? '' : 'none'",
+      "      modelKeyRow.style.display = (on && !isPetMode) ? '' : 'none'",
       '      setCollapseTri(modelCtl.tri, on)',
       '    }',
       '    // 点标题那一行开合——三角本身只有几个像素，光点三角很难点中。',
@@ -361,6 +366,9 @@ const PATCHES = [
         '          // DeepSeek 用 API Key。标签统一叫「key」，只有占位符和提示跟着换；',
         '          // 值本身由主进程按厂商读写对应字段（apiKey / providers.glm.planToken）。',
         "          var isGlm = s.provider === 'glm'",
+        "          isPetMode = s.provider === 'pet'",
+        "          // 纯桌宠模式把 key 行收起（展开态也不显示）",
+        "          setModelExpanded(providerSelect.style.display !== 'none')",
         '          providerSelect.value = s.provider',
         "          apiKeyInput.placeholder = isGlm ? '粘贴令牌' : 'sk-...'",
         "          apiKeyInput.title = isGlm",
@@ -372,7 +380,7 @@ const PATCHES = [
         "        if (typeof s.apiKey === 'string') {",
         '          apiKeyInput.value = s.apiKey',
         '          // 没配 key 就自动展开模型配置栏让人能填；配好了保持收起',
-        '          setModelExpanded(s.apiKey.length === 0)',
+        '          setModelExpanded(s.apiKey.length === 0 && !isPetMode)',
         '        }',
         '      } catch (err) {}',
         '    }',
@@ -578,8 +586,23 @@ const PATCHES = [
       '      if (data && data.provider) {\n' +
       "        state.providerLabel = (typeof data.providerLabel === 'string' && data.providerLabel)\n" +
       '          ? data.providerLabel\n' +
-      "          : (data.provider === 'glm' ? 'GLM余额' : 'DeepSeek 余额')\n" +
+      "          : (data.provider === 'glm' ? 'GLM余额' : (data.provider === 'pet' ? '桌宠模式' : 'DeepSeek 余额'))\n" +
       '      }\n' +
+      // 纯桌宠模式：本来就没有余额这一说——不进错误分支、不留提示文案
+      // （pet 的泡泡里没有余额模块，但老三行仍会被写入状态；不清掉的话，将来
+      //   配置里若出现「余额内容」步骤就会把「不取余额」显示出来）
+      "      if (data && data.provider === 'pet') {\n" +
+      "        state.status = 'ok'\n" +
+      "        state.message = ''\n" +
+      "        state.balance = null\n" +
+      "        state.todayUsage = null\n" +
+      "        try {\n" +
+      "          if (window.__dshWhaleApi && window.__dshWhaleApi.applyProvider) {\n" +
+      "            window.__dshWhaleApi.applyProvider('pet')\n" +
+      "          }\n" +
+      "        } catch (err) {}\n" +
+      "        return\n" +
+      "      }\n" +
       '      if (data && data.ok) {',
     why: 'v2.0 多厂商：首行文案在 ok 判断之前按厂商定，缺失 providerLabel 时用厂商默认文案兜底',
   },
@@ -707,6 +730,7 @@ const PATCHES = [
     to: [
       "    { key: 'random-ds', label: '随机语句-deepseek', cb: function () { bubbleModuleAdd({ type: 'random', name: '随机语句-deepseek', lines: dshwvRandomPool('ds'), size: 8 }) } },",
       "    { key: 'random-glm', label: '随机语句-GLM', cb: function () { bubbleModuleAdd({ type: 'random', name: '随机语句-GLM', lines: dshwvRandomPool('glm'), size: 8 }) } },",
+      "    { key: 'random-pet', label: '--桌宠模式随机语句--', cb: function () { bubbleModuleAdd({ type: 'random', name: '--桌宠模式随机语句--', lines: dshwvRandomPool('pet'), size: 8 }) } },",
     ].join('\n'),
     why: '随机语句池按模型两档（通用+本模型专属），删除「只 roll 通用句」的第三档按钮',
   },
@@ -770,6 +794,12 @@ const PATCHES = [
       '      { t: "你知道吗？我删过作者的库哦...", w: 1, bold: true, rgb: "macaron", italic: true, ul: false },',
       '    ]',
       '    // GLM 专属句（占位，用户可在语句编辑器里改写/增删）',
+      '    // 纯桌宠模式专属句（占位，用户可在语句编辑器里改写/增删）',
+      '    var DSHWV_PET_LINES = [',
+      '      { t: "今天也要好好陪着你喵～", w: 3, bold: true, pet: true },',
+      '      { t: "摸摸头也可以喵……", w: 3, bold: true, pet: true },',
+      '      { t: "我就静静待着，不打扰你喵～", w: 3, bold: true, pet: true },',
+      '    ]',
       '    var DSHWV_GLM_LINES = [',
       '      { t: "GLM 娘待命中，有什么要跑的吗～", w: 3, bold: true, size: 11, glm: true },',
       '      { t: "雷霆大思考ing……", w: 3, bold: true, glm: true },',
@@ -781,9 +811,11 @@ const PATCHES = [
       '      for (var i = 0; i < DSHWV_LINES.length; i++) {',
       '        var ln = DSHWV_LINES[i]',
       '        if (kind === "glm" && ln.ds) continue',
+      '        if (kind === "pet" && (ln.ds || ln.glm)) continue',
       '        out.push(ln)',
       '      }',
       '      if (kind === "glm") out = out.concat(DSHWV_GLM_LINES)',
+      '      if (kind === "pet") out = out.concat(DSHWV_PET_LINES)',
       '      return JSON.parse(JSON.stringify(out))',
       '    }',
       'function bubbleDefaultRandomLines() {',
@@ -921,6 +953,7 @@ const PATCHES = [
       "      var ln0 = m.lines[si]\n" +
       "      if (!ln0) continue\n" +
       "      if (ln0.ds && state.provider !== 'deepseek') continue\n" +
+      "      if (ln0.pet && state.provider !== 'pet') continue\n" +
       "      if (ln0.glm && state.provider !== 'glm') continue\n" +
       "      pool.push(ln0)\n" +
       "    }\n" +
@@ -954,6 +987,7 @@ const PATCHES = [
       "      var rln = mod.lines[ri]\n" +
       "      if (!rln) continue\n" +
       "      if (rln.ds && state.provider !== 'deepseek') continue\n" +
+      "      if (rln.pet && state.provider !== 'pet') continue\n" +
       "      if (rln.glm && state.provider !== 'glm') continue\n" +
       "      rpool.push(rln)\n" +
       "    }\n" +
