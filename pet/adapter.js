@@ -195,12 +195,14 @@
   window.addEventListener('pointerdown', function (e) {
     pointing = true
     setIgnore(false)
-    // 点进文本输入控件 = 用户要打字 → 这时才切窗口可聚焦（并补 focus/select）；
-    // 点在别的控件上 → 立刻交还焦点（不依赖 focusout：实测 blur() 在桌面窗口里
+    // 点进需要激活的控件（文本输入 / select / 文件选择）→ 切窗口可聚焦：
+    // 文本类要键盘，select/file 要系统原生弹层。
+    // 点在其它控件上 → 立刻交还焦点（不依赖 focusout：实测 blur() 在桌面窗口里
     // 不一定触发 focusout，靠它释放会漏）
-    if (isTextInput(e.target)) {
+    if (needsActivation(e.target)) {
       setFocusable(true)
-      focusInputSoon(e.target)
+      if (isTextInput(e.target)) focusInputSoon(e.target)
+      else { try { e.target.focus() } catch (err) {} }
     } else {
       setFocusable(false)
     }
@@ -233,6 +235,18 @@
     update(e.clientX, e.clientY)
   }, true)
   window.addEventListener('mousemove', function (e) { update(e.clientX, e.clientY) }, true)
+
+  // 悬停到 <select>（或文件选择）上就提前把窗口切成可激活：原生下拉是鼠标
+  // **抬起**时才弹的，只在 pointerdown 里切可能来不及（IPC + 激活有延迟），
+  // 先悬停切好最稳。setFocusable 幂等，扫过菜单里几个下拉只会触发一次。
+  window.addEventListener('pointerover', function (e) {
+    var el = e.target
+    if (!el) return
+    var tag = (el.tagName || '').toLowerCase()
+    var isSelect = tag === 'select'
+    var isFile = tag === 'input' && String(el.type || '').toLowerCase() === 'file'
+    if (isSelect || isFile) setFocusable(true)
+  }, true)
 
   // 右键不再做任何事——菜单只从左键点汉堡按钮这一条路进（按设计如此）。
   // 这里刻意不注册 contextmenu 处理器，也不 preventDefault：Chromium 对
@@ -381,6 +395,25 @@
   // 抢焦点符合预期；其余交互全程保持不抢焦点。
   // -------------------------------------------------------------------------
 
+  // 需要窗口「可激活」的控件（不是"需要键盘"那么窄）：
+  //   · 文本类输入 —— 要键盘
+  //   · <select> / <input type=file|color> —— 要弹**系统原生弹层**（下拉列表、
+  //     文件对话框）。窗口若是 WS_EX_NOACTIVATE（focusable:false），原生弹层
+  //     根本打不开，表现就是"下拉框点不动"（实测踩到：菜单里选不了模型）。
+  // 复选框/单选/滑块/普通按钮只吃鼠标事件，无需激活。
+  function needsActivation(el) {
+    if (!el) return false
+    var tag = (el.tagName || '').toLowerCase()
+    if (tag === 'textarea' || tag === 'select') return true
+    if (tag === 'input') {
+      var t = String(el.type || 'text').toLowerCase()
+      return t !== 'checkbox' && t !== 'radio' && t !== 'range' &&
+        t !== 'button' && t !== 'submit' && t !== 'reset'
+    }
+    return el.isContentEditable === true
+  }
+
+  // 需要键盘的文本输入（比 needsActivation 窄：select 不需要 focus/select 重试）
   function isTextInput(el) {
     if (!el) return false
     var tag = (el.tagName || '').toLowerCase()
