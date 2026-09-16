@@ -1,62 +1,71 @@
 // 从上游同步挂件前端代码。
 //
-//   node tools/sync-upstream.mjs            # 用 _ref/index.js 里已缓存的副本
-//   node tools/sync-upstream.mjs --fetch    # 先重新下载上游 lib/index.js 再同步
+//   node tools/sync-upstream.mjs            # 用 _ref/whale-widget.js 里已缓存的副本
+//   node tools/sync-upstream.mjs --fetch    # 先重新下载上游源码再同步
 //
-// 关键点：上游把整个前端放在一个模板字符串里（const WIDGET_JS = `...`）。
-// 必须取它的「运行时求值结果」，不能直接切片源码文本——源码里存在转义
-// （如 .join('\\n') 求值后是真换行）。照抄源码会让 CSS 规则之间用字面
-// "\n" 分隔，浏览器错误恢复时把那个 n 粘到下一个选择器上，导致除第一条
-// 外所有样式失效。本脚本通过真正 import 该声明来求值，保证与原版一致。
+// 上游 0.3.0 起，前端从 lib/index.js 的 WIDGET_JS 模板字符串里拆了出来，
+// 变成独立文件 assets/whale-widget.js，所以这里直接下载/读取那个文件本身。
+//
+// 顺带解决掉旧版一个大坑：以前必须「求值」模板字符串而不能直接照抄源码文本
+// （源码里的 .join('\\n') 求值后才是真换行，照抄会让 CSS 规则之间用字面 "\n"
+// 分隔，浏览器错误恢复时把那个 n 粘到下一个选择器上，导致除第一条外所有样式
+// 失效）。现在文件本身就是成品，照抄即正确。
+//
+// 同时把上游宿主侧 lib/index.js 拉到 _ref/index.js，只作参考——那些
+// /dsh-whale/* 路由要我们自己实现，这份是最权威的实现对照。
 
 import fs from 'node:fs'
 import path from 'node:path'
-import os from 'node:os'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const REF = path.join(ROOT, '_ref', 'index.js')
+const REF = path.join(ROOT, '_ref', 'whale-widget.js')
+const REF_HOST = path.join(ROOT, '_ref', 'index.js')
 const OUT = path.join(ROOT, 'lib', 'widget.js')
-const UPSTREAM = 'https://raw.githubusercontent.com/MeteorNOX/DeepSeek-Balance-Whale-Widget/main/lib/index.js'
+const BASE = 'https://raw.githubusercontent.com/MeteorNOX/DeepSeek-Balance-Whale-Widget/main'
+const UPSTREAM = BASE + '/assets/whale-widget.js'
+const UPSTREAM_HOST = BASE + '/lib/index.js'
 
 if (process.argv.includes('--fetch')) {
-  console.log('下载上游 lib/index.js ...')
-  const res = await fetch(UPSTREAM, { signal: AbortSignal.timeout(60000) })
-  if (!res.ok) throw new Error('下载失败: HTTP ' + res.status)
-  const text = await res.text()
-  fs.mkdirSync(path.dirname(REF), { recursive: true })
-  fs.writeFileSync(REF, text, 'utf8')
-  console.log('已缓存到 _ref/index.js (' + text.length + ' 字节)')
+  const get = async (url, label) => {
+    console.log('下载上游 ' + label + ' ...')
+    const res = await fetch(url, { signal: AbortSignal.timeout(120000) })
+    if (!res.ok) throw new Error('下载失败: HTTP ' + res.status + ' (' + url + ')')
+    const text = await res.text()
+    fs.mkdirSync(path.dirname(REF), { recursive: true })
+    return text
+  }
+  const widget = await get(UPSTREAM, 'assets/whale-widget.js（前端）')
+  fs.writeFileSync(REF, widget, 'utf8')
+  console.log('  已缓存到 _ref/whale-widget.js (' + widget.length + ' 字节)')
+  const host = await get(UPSTREAM_HOST, 'lib/index.js（宿主侧，仅供参考）')
+  fs.writeFileSync(REF_HOST, host, 'utf8')
+  console.log('  已缓存到 _ref/index.js (' + host.length + ' 字节)')
 }
 
 const src = fs.readFileSync(REF, 'utf8')
-const decl = /^const WIDGET_JS = `[\s\S]*?`$/m.exec(src)
-if (!decl) throw new Error('没能在 _ref/index.js 里定位 const WIDGET_JS 声明')
-
-// 把该声明单独落成一个模块并 import，取到的就是模板字符串的求值结果
-const tmp = path.join(os.tmpdir(), 'dspet-widget-sync-' + process.pid + '.mjs')
-fs.writeFileSync(tmp, decl[0] + '\nexport default WIDGET_JS\n', 'utf8')
-let evaluated
-try {
-  const mod = await import(pathToFileURL(tmp).href)
-  evaluated = mod.default
-} finally {
-  try { fs.unlinkSync(tmp) } catch (err) {}
+// 结构自检：上游若再动结构，这几点会立刻报出来，而不是让补丁静默错位
+if (src.length < 100000) {
+  throw new Error('_ref/whale-widget.js 看起来不完整（' + src.length + ' 字节）')
 }
-
-if (typeof evaluated !== 'string' || evaluated.length === 0) {
-  throw new Error('模板字符串求值结果为空，上游结构可能变了')
+for (const marker of ['window.__dshWhaleWidget', 'var BALANCE_URL', 'var SIZE_URL', 'var RANDOM_GROUPS']) {
+  if (src.indexOf(marker) < 0) {
+    throw new Error('上游前端结构可能变了，找不到标记：' + marker)
+  }
 }
 
 // 上游是 DSH 插件，个别文案指向 dsh。独立版按需改写，并在此登记原因。
 // 每条补丁必须命中，否则直接报错——上游一旦改动，我们要立刻知道，
 // 而不是让补丁静默失效、旧的 dsh 文案又冒出来。
 const PATCHES = [
-  {
-    from: "'实时·令牌 (用法：去问dsh)'",
-    to: "'实时·令牌 (需填平台令牌)'",
-    why: '原版让用户去问 dsh 怎么拿令牌；独立版没有 dsh，改为指向 config.json 的 platformToken',
-  },
+  // —— 上游 0.3.0 起作废的补丁（记在这里，免得以后有人重新加回来）——
+  //   · 用量模式文案：'实时·令牌 (用法：去问dsh)' → '(需填平台令牌)'
+  //     上游删掉了「用量」模式下拉，记账成了唯一方式，那条文案不复存在。
+  //   · 时段台词组的三条（buildGroup1 的峰值文案分支 / 返回值改造 / 组内「今日已用」行）
+  //     上游把时段展示从台词池里移出，改由「泡泡点击序列」的 peak 模块承担，
+  //     buildGroup1、RANDOM_GROUPS 里的时段组都已删除。
+  //   · 菜单里「用量」「峰谷」两行在 GLM 下变灰：这两行和它们的选择框
+  //     （usageSelect / peakSelect / row4 / row5）上游已整个删除，无从变灰。
   {
     // 锚点用单行，避免受文件换行符影响。挂件自己的 saveConfig() 不带这个字段，
     // 服务端会沿用已存的值，所以不会被覆盖。
@@ -133,20 +142,10 @@ const PATCHES = [
         '        ].join("")',
         '        document.head.appendChild(st)',
         '      }',
-        '      // GLM 暂时不支持设置「用量」和「峰谷」——这两项都是 DeepSeek 的语义',
-        '      // （记账/令牌、梁文峰谷文案）。变灰但**不改值**，切回 DeepSeek 立刻恢复。',
-        "      var glmOff = want === 'glm'",
-        '      var setRowOff = function (row, sel, why) {',
-        '        try {',
-        '          if (sel) {',
-        '            sel.disabled = glmOff',
-        '            sel.title = glmOff ? why : ""',
-        '          }',
-        '          if (row) row.style.opacity = glmOff ? ".4" : ""',
-        '        } catch (err) {}',
-        '      }',
-        '      setRowOff(row4, usageSelect, "GLM 模式暂不支持设置用量")',
-        '      setRowOff(row5, peakSelect, "GLM 模式暂不支持设置峰谷文案")',
+        // 上游 0.3.0 删掉了菜单里的「用量」「峰谷」两行（以及它们的选择框），
+        // 所以原来那段「GLM 下把这两行变灰」的代码必须一起删掉——它引用的
+        // row4/usageSelect/peakSelect 已不存在，留着会抛 ReferenceError，
+        // 而 applyProvider 外面裹着 try/catch，异常会被吞掉、换肤整个失效。
         '      return true',
         '    } catch (err) {',
         '      return false',
@@ -170,7 +169,11 @@ const PATCHES = [
     // 挂件内部，所以这里只负责画控件和转发：读写由 Electron 主进程处理
     // （它才有定时器和系统启动项）。没有桌宠桥时（浏览器标签页模式）不添加，
     // 免得出现两个点了没用的控件。
-    from: 'menuBox.appendChild(row9)',
+    // 锚点用「主菜单里最后追加的那一行」：上游 0.3.0 起 menuBox 的组装顺序变成
+    // row2/row3/row6/row7 → sep → row9 → rowSnap（吸附与翻转）→ rowHide（隐藏菜单按钮）
+    // → rowRes（资源管理），之后才把整块包进 menuRootView。挂在 row9 后面会插到菜单
+    // 中段，所以改挂 rowRes——这样我们的几行仍然在主菜单最底部。
+    from: 'menuBox.appendChild(rowRes)',
     to: 'menuBox.appendChild(row9)\n' +
       [
         '',
@@ -366,11 +369,6 @@ const PATCHES = [
     why: 'v2.0 多厂商：气泡提示行前缀不再写死「今日已用」',
   },
   {
-    from: "    { t: '今日已用 ' + fmt(state.todayUsage, state.currency), s: 'C', c: '' },",
-    to: "    { t: (state.usageLabel || '今日已用') + ' ' + fmt(state.todayUsage, state.currency), s: 'C', c: '' },",
-    why: 'v2.0 多厂商：随机台词的时段组前缀不再写死「今日已用」',
-  },
-  {
     // 余额响应里带 provider，拿到就自应用一次贴图/配色——这样浏览器标签页模式
     // 也能自动换皮（那边没有桌宠适配器可以代为调用）。
     // 必须判 data.provider 存在：错误响应（比如 GLM 没配令牌）里没有这个字段，
@@ -442,45 +440,10 @@ const PATCHES = [
     count: 1,
     why: '菜单控件压在贴图不透明像素上时 click 被鲸鱼区域的拦截吞掉，导致按钮点不动',
   },
-  {
-    // 「梁文峰谷 / !?强强?!」这套峰谷文案是 DeepSeek 专属的趣味显示。切到 GLM 后时段
-    // 文案固定用「空闲时段 / 高峰时段」，不受菜单里那个选择影响（用户要求：不要跨模型）。
-    from: "  if (peakMode === 'liangwen') {\n" +
-      "    offText = '梁文谷'\n" +
-      "    peakText = '梁文峰'\n" +
-      "  } else if (peakMode === 'qiangqiang') {\n" +
-      "    offText = '!?谷谷?!'\n" +
-      "    peakText = '!?峰峰?!'\n" +
-      '  }',
-    to: "  if (state.provider !== 'glm') {\n" +
-      "    if (peakMode === 'liangwen') {\n" +
-      "      offText = '梁文谷'\n" +
-      "      peakText = '梁文峰'\n" +
-      "    } else if (peakMode === 'qiangqiang') {\n" +
-      "      offText = '!?谷谷?!'\n" +
-      "      peakText = '!?峰峰?!'\n" +
-      '    }\n' +
-      '  }',
-    why: '峰谷文案选择只应影响 DeepSeek：GLM 的时段气泡固定显示「空闲时段 / 高峰时段」',
-  },
-  {
-    // GLM 的用量行是「周配额已用 n%」，放进时段气泡里没有意义（用户要求去掉）。
-    // DeepSeek 保持原样——那一行是「今日已用 ¥x」。所以改成先组数组再按厂商决定加不加。
-    from: '  return [\n' +
-      "    { t: '当前时间段为:', s: 'A', c: '' },\n" +
-      "    { t: peak ? peakText : offText, s: 'P', c: peak ? '#e0433f' : '#2fa24c' },\n" +
-      "    { t: (state.usageLabel || '今日已用') + ' ' + fmt(state.todayUsage, state.currency), s: 'C', c: '' },\n" +
-      '  ]',
-    to: '  var lines = [\n' +
-      "    { t: '当前时间段为:', s: 'A', c: '' },\n" +
-      "    { t: peak ? peakText : offText, s: 'P', c: peak ? '#e0433f' : '#2fa24c' },\n" +
-      '  ]\n' +
-      "  if (state.provider !== 'glm') {\n" +
-      "    lines.push({ t: (state.usageLabel || '今日已用') + ' ' + fmt(state.todayUsage, state.currency), s: 'C', c: '' })\n" +
-      '  }\n' +
-      '  return lines',
-    why: 'GLM 的时段气泡不再显示用量（周配额已用）那一行',
-  },
+  // 这里原有两条针对时段台词组的补丁（给 GLM 固定「空闲/高峰时段」、去掉用量行）。
+  // 上游 0.3.0 已把时段展示从台词池搬进「泡泡点击序列」的 peak 模块，
+  // buildGroup1 整个不存在了，所以两条都已作废——GLM 的时段文案改由
+  // 服务端的泡泡配置承担（见 server.js 里的 bubble 配置思路 / HANDOFF 说明）。
   {
     // GLM 暂时没有自己的台词池。下面这些组（怪话 + 动图）都是 DeepSeek 专属的，
     // 标上 ds 之后由 pickRandomLines() 在 GLM 下整组跳过，所以 GLM 点气泡只剩时段组。
@@ -558,29 +521,11 @@ const PATCHES = [
       '}',
     why: 'v2.0：抽签池按厂商过滤，DeepSeek 的怪话与动图不在 GLM 模式下出现',
   },
-  {
-    // 厂商存在服务端配置里，是「设置」而不是余额响应的副产品。挂件启动时会拉一次
-    // size.json 回显设置，顺手把厂商也读下来并应用——于是厂商的来源不再依赖
-    // balance.json 里有没有 provider 字段。
-    // 这条修的是一个实测 bug：GLM 没配令牌时余额接口返回的是错误对象（里面没有
-    // provider），state.provider 就退回 deepseek，导致时段文案、怪话过滤、用量行
-    // 全按 DeepSeek 走（切到 GLM 还能看到 DeepSeek 的怪话和动图）。
-    from: "    if (d && typeof d.peakMode === 'string') {\n" +
-      "      peakMode = d.peakMode === 'liangwen' || d.peakMode === 'qiangqiang' ? d.peakMode : 'default'\n" +
-      '      peakSelect.value = peakMode\n' +
-      '    }',
-    to: "    if (d && typeof d.peakMode === 'string') {\n" +
-      "      peakMode = d.peakMode === 'liangwen' || d.peakMode === 'qiangqiang' ? d.peakMode : 'default'\n" +
-      '      peakSelect.value = peakMode\n' +
-      '    }\n' +
-      "    if (d && typeof d.provider === 'string') {\n" +
-      "      state.provider = d.provider === 'glm' ? 'glm' : 'deepseek'\n" +
-      '      if (window.__dshWhaleApi && window.__dshWhaleApi.applyProvider) {\n' +
-      '        window.__dshWhaleApi.applyProvider(d.provider)\n' +
-      '      }\n' +
-      '    }',
-    why: 'v2.0 多厂商：厂商改从 size.json（设置）读取并应用，不再依赖余额响应里有没有 provider',
-  },
+  // 这里原有一条「厂商从 size.json 读取」的补丁，锚点是回显块里的 peakMode 那段。
+  // 上游 0.3.0 把那一段改成了 legacy 迁移（peakMode 只作旧配置迁移用），锚点不复存在，
+  // 补丁已移到数组末尾、锚点换成 usageMode（逻辑相同）。
+  // 保留这段注释是为了留下排查历史：GLM 未配令牌时余额响应是错误对象、里面没有
+  // provider，state.provider 会退回 deepseek，导致气泡文案与台词池全按 DeepSeek 走。
   {
     // 首行文案属于「设置」层面，不是「数据」层面：搬数据失败时（比如 GLM 还没配令牌）
     // 服务端也会把厂商信息一起返回，所以必须放在 ok 判断之前读。
@@ -597,17 +542,71 @@ const PATCHES = [
       '      if (data && data.ok) {',
     why: 'v2.0 多厂商：首行文案在 ok 判断之前按厂商定，缺失 providerLabel 时用厂商默认文案兜底',
   },
+  {
+    // —— 独立版（非 DSH）的第一道关：让挂件肯在我们自己的窗口里初始化 ——
+    // 上游 0.3.0 加了「页面自检」：脚本会被注入 DSH 的每个 index 页（含插件市场等
+    // SPA 视图），为避免在非聊天界面乱插 DOM，它要求 #root 里存在 composer
+    // （textarea 或 contenteditable），5 秒内找不到就直接 return、一行都不执行。
+    // 我们的宿主是一个普通窗口/标签页，没有 composer，原样保留会导致挂件完全不出现。
+    // 这个脚本只会被注入到我们自己的页面里，所以直接放行。
+    from: "function dshwIsChatRoot(r) {\n" +
+      "  return !!(r && (r.querySelector('textarea') || r.querySelector('[contenteditable=\"true\"]')))\n" +
+      '}',
+    to: '// 独立版：宿主是普通窗口，没有 DSH 的 #root composer，所以不做这项自检\n' +
+      'function dshwIsChatRoot(r) {\n' +
+      '  return true\n' +
+      '}',
+    why: '上游 0.3.0 的「只在 DSH 主聊天界面挂载」自检会让挂件在桌宠窗口里完全不执行',
+  },
+  {
+    // 厂商是「设置」，不是余额响应的副产品。挂件启动会拉一次 size.json 回显设置，
+    // 顺手把厂商也读下来并应用——于是厂商不再依赖 balance.json 里有没有 provider
+    // （GLM 未配令牌时那个响应是错误对象，没有这个字段，会导致文案与台词池全按
+    // DeepSeek 走）。上游 0.3.0 把这里的 peakMode 那段改成了 legacy 迁移，
+    // 所以锚点换到上面这段 usageMode。
+    from: "    if (d && typeof d.usageMode === 'string') {\n" +
+      "      usageMode = 'ledger' // 旧 token 配置自动视为小鲸鱼记账\n" +
+      '    }',
+    to: "    if (d && typeof d.usageMode === 'string') {\n" +
+      "      usageMode = 'ledger' // 旧 token 配置自动视为小鲸鱼记账\n" +
+      '    }\n' +
+      "    if (d && typeof d.provider === 'string') {\n" +
+      "      state.provider = d.provider === 'glm' ? 'glm' : 'deepseek'\n" +
+      '      if (window.__dshWhaleApi && window.__dshWhaleApi.applyProvider) {\n' +
+      '        window.__dshWhaleApi.applyProvider(d.provider)\n' +
+      '      }\n' +
+      '    }',
+    why: '多厂商：厂商改从 size.json（设置）读取并应用，不再依赖余额响应里有没有 provider',
+  },
 ]
 
-let patched = evaluated
+// 必须「边应用边检查」：有些补丁的锚点是前一条补丁写进去的文本（例如改完响应处理
+// 再往那段里插东西），拿未打补丁的原文去检查它们会误报失效。
+// 同时把命中情况全部收集起来——上游一次改动常会让好几条补丁同时失效，
+// 一次把清单报全，比逐条撞墙再重跑省事得多。
+let patched = src
+const applied = []
+const misses = []
 for (const p of PATCHES) {
   const want = p.count || 1
   const hits = patched.split(p.from).length - 1
   if (hits !== want) {
-    throw new Error('补丁未命中（出现 ' + hits + ' 次，应为 ' + want + '）：' + p.from + '\n原因：' + p.why)
+    misses.push({ hits: hits, want: want, from: p.from, why: p.why })
+    continue
   }
   patched = patched.split(p.from).join(p.to)
-  console.log('已应用补丁: ' + p.from.slice(0, 60) + (p.from.length > 60 ? '…' : ''))
+  applied.push(p)
+}
+if (misses.length) {
+  console.error('\n有 ' + misses.length + ' 条补丁没命中（上游可能改了这块代码）：')
+  for (const m of misses) {
+    console.error('  ✗ 命中 ' + m.hits + '/' + m.want + '  ' + JSON.stringify(m.from.slice(0, 90)))
+    console.error('     原因：' + m.why)
+  }
+  throw new Error('补丁未全部命中，已中止（没有写出 lib/widget.js）')
+}
+for (const p of applied) {
+  console.log('已应用补丁: ' + p.from.slice(0, 60).replace(/\n/g, '⏎') + (p.from.length > 60 ? '…' : ''))
 }
 
 fs.mkdirSync(path.dirname(OUT), { recursive: true })
@@ -618,7 +617,7 @@ const { execFileSync } = await import('node:child_process')
 execFileSync(process.execPath, ['--check', OUT], { stdio: 'inherit' })
 
 console.log('已写出 lib/widget.js')
-console.log('  源文本长度 : ' + decl[0].length)
-console.log('  求值后长度 : ' + evaluated.length)
-console.log('  补丁数     : ' + PATCHES.length)
-console.log('  语法检查   : 通过')
+console.log('  上游源码长度 : ' + src.length)
+console.log('  产出长度     : ' + patched.length)
+console.log('  补丁数       : ' + PATCHES.length)
+console.log('  语法检查     : 通过')

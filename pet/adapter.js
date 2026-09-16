@@ -77,14 +77,16 @@
     return inRect(document.querySelector('.dshwv-menu-btn'), x, y)
   }
 
-  // 气泡打开后，它的 SVG 形状会变成 pointer-events:visiblePainted，也就是
+  // 气泡打开后，它的容器会变成 pointer-events:visiblePainted，也就是
   // "只有画出来的气泡本体可点"。用 elementFromPoint 直接复用浏览器这套命中
   // 测试，比自己算几何准确——而且气泡关闭时它是 pointer-events:none，
   // elementFromPoint 自然返回不到它，不需要额外判断开没开。
+  // 容器类名：上游 0.3.0 起由 .dshwv-bubble 改为 .dshwv-pop（里面是 .dshwv-text
+  // 承载三行文字、.dshwv-gif 承载动图）。
   function overBubbleShape(x, y) {
     try {
       var el = document.elementFromPoint(x, y)
-      return !!(el && el.closest && el.closest('.dshwv-bubble'))
+      return !!(el && el.closest && el.closest('.dshwv-pop'))
     } catch (err) {
       return false
     }
@@ -280,8 +282,10 @@
         case 'scale': return setRange('大小', value)
         case 'vol': return setRange('音量', value)
         case 'soundSet': return setSelect('音效', value)
-        case 'usageMode': return setSelect('用量', value)
-        case 'peakMode': return setSelect('峰谷', value)
+        // 上游 0.3.0 删掉了菜单里的「用量」和「峰谷」两行（记账成唯一方式，
+        // 峰谷改由「泡泡点击序列」的 peak 模块承担），所以这两个键不再有控件可设。
+        case 'usageMode':
+        case 'peakMode': return false
         case 'bubbleOn': return setCheck('气泡', value)
         case 'turnCostOn': return setCheck('每轮消耗提示', value)
         case 'turnCostCloseMs': return setNumber('每轮消耗提示', Number(value) / 1000)
