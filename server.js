@@ -1276,7 +1276,7 @@ function usageSettingsDefaults() {
         // （第一条一直挂着，第二条轮不到）。给 TTL 让队列依次播完两条。
         autoClose: true, ttlSec: 8,
         lines: [
-          { type: 'text', text: '老大，额度只有', size: 5, bold: true },
+          { type: 'text', text: '老大，5小时额度只有', size: 5, bold: true },
           { type: 'text', text: '{left}', size: 5, bold: true, rgb: 'rouge', color: '', bgRgb: '', bg: '', row: 2 },
           { type: 'text', text: '了喵，燃尽了喵……', size: 5, bold: true, row: 2 },
         ],
@@ -1286,7 +1286,7 @@ function usageSettingsDefaults() {
         lines: [
           // 拆成「老大周额度不到20%了」+「准备雷霆大思考……」两行：
           // 合在一行会因超宽被折成「…雷霆大思 / 考……」，断句难看
-          { type: 'text', text: '老大周额度不到', size: 5, bold: true, row: 1 },
+          { type: 'text', text: '本周额度不到', size: 5, bold: true, row: 1 },
           { type: 'text', text: '{below}%', size: 5, bold: true, rgb: 'rouge', row: 1 },
           { type: 'text', text: '了', size: 5, bold: true, row: 1 },
           { type: 'text', text: '准备雷霆大思考……', size: 5, bold: true, row: 2 },
