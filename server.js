@@ -1176,6 +1176,16 @@ const BUBBLE_DEFAULT_ITEMS_DEEPSEEK = /* 上游出厂快照，勿手改 */ [
 // 按用户要求去掉了第二泡（petpet 图）——GLM 点角色永远出余额泡。
 // 峰谷只用 {status} 样式：倒计时样式的前端本地推算写死了 DeepSeek 时段表
 // （工作日 9–12/14–18），对 GLM（14–18）会把切换点算错。
+// 峰谷模块对（与 DeepSeek 同版型）：mini 状态块（峰=rouge 底 / 谷=bamboo 底）+
+// 倒计时块，两者 row 键相同 → 并成一行，显示成「峰 03:15:10」。
+// 倒计时按模型算（widget 的 bubbleCountdownIsPeak 已按 provider 分支）。
+// 单一来源：默认配置与旧存档迁移都用它，避免两边漂移。
+function glmPeakPair() {
+  return [
+    { type: 'peak', size: 2, peakColor: '#ffffff', offColor: '#ffffff', tpl: '{status}', peakRgb: '', offRgb: '', peakBgRgb: 'rouge', peakBg: '', offBgRgb: 'bamboo', offBg: '', peakStyle: 'mini', bold: true, row: 4, fontFamily: '"Microsoft YaHei",sans-serif' },
+    { type: 'peak', size: 4, bold: true, peakColor: '#e0433f', offColor: '#2fa24c', peakRgb: 'rouge', offRgb: 'bamboo', peakStyle: 'count', tpl: '{countdown}', row: 4, fontFamily: '', italic: false, ul: true },
+  ]
+}
 function bubbleDefaultItemsGlm() {
   return [
     {
@@ -1184,12 +1194,7 @@ function bubbleDefaultItemsGlm() {
         { type: 'text', text: 'GLM余额', size: 8, bold: true, rgb: '', ul: false, italic: false, color: '' },
         { type: 'balance', size: 20, rgb: 'indigo', color: '', tpl: '{balance_ds}', bgRgb: '', bg: '', fontFamily: '', bold: false },
         { type: 'today', size: 4, color: '#9fb0d9', tpl: '周配额已用 {expense_ds}' },
-        // 峰谷与 DeepSeek 同版型：mini 状态块（峰=rouge 底/谷=bamboo 底）跟在
-        // 倒计时前一格，两者 row 键相同 → 并成一行，显示成「峰 02:16:10」。
-        // 倒计时按模型算（widget 里 bubbleCountdownIsPeak 已按 provider 分支）。
-        { type: 'peak', size: 2, peakColor: '#ffffff', offColor: '#ffffff', tpl: '{status}', peakRgb: '', offRgb: '', peakBgRgb: 'rouge', peakBg: '', offBgRgb: 'bamboo', offBg: '', peakStyle: 'mini', bold: true, row: 4, fontFamily: '"Microsoft YaHei",sans-serif' },
-        { type: 'peak', size: 4, bold: true, peakColor: '#e0433f', offColor: '#2fa24c', peakRgb: 'rouge', offRgb: 'bamboo', peakStyle: 'count', tpl: '{countdown}', row: 4, fontFamily: '', italic: false, ul: true },
-      ],
+      ].concat(glmPeakPair()),
     },
   ]
 }
@@ -1198,10 +1203,50 @@ function bubbleConfigFile(provider) {
   return path.join(DATA_DIR, '.dshw-bubble-' + (provider === 'glm' ? 'glm' : 'deepseek') + '.json')
 }
 
+// —— 一次性迁移：GLM 旧的单个峰谷块 → DS 同版型的一对 ——
+// 改版前 GLM 默认用的是单个 peakStyle:'default' 的「高峰时段/空闲时段」块。
+// 用户已保存过的配置里会留着那一块（存档优先于默认值），光改默认值看不到效果。
+// 只在模块与旧默认**逐字段一致**时替换——用户自己改过峰谷（字号/颜色/文案）就不动。
+const LEGACY_GLM_PEAK_MODULE = {
+  type: 'peak', size: 4, bold: true, peakColor: '#e0433f', offColor: '#2fa24c',
+  peakRgb: 'rouge', offRgb: 'bamboo', peakStyle: 'default', tpl: '{status}',
+}
+function isLegacyGlmPeak(m) {
+  if (!m || m.type !== 'peak') return false
+  const keys = Object.keys(LEGACY_GLM_PEAK_MODULE)
+  if (Object.keys(m).length !== keys.length) return false
+  for (const k of keys) if (m[k] !== LEGACY_GLM_PEAK_MODULE[k]) return false
+  return true
+}
+function migrateGlmPeak(cfg) {
+  let changed = false
+  const walkMods = (arr) => {
+    if (!Array.isArray(arr)) return
+    for (let i = 0; i < arr.length; i++) {
+      if (isLegacyGlmPeak(arr[i])) {
+        arr.splice(i, 1, ...JSON.parse(JSON.stringify(glmPeakPair())))
+        changed = true
+        i++ // 跳过刚插入的倒计时块
+      }
+    }
+  }
+  const walkItem = (it) => {
+    if (!it || typeof it !== 'object') return
+    if (Array.isArray(it.modules)) walkMods(it.modules)
+    if (Array.isArray(it.options)) for (const o of it.options) if (o && o.item) walkItem(o.item)
+  }
+  if (Array.isArray(cfg.items)) for (const it of cfg.items) walkItem(it)
+  if (Array.isArray(cfg.lib)) for (const lb of cfg.lib) if (lb && lb.module) walkItem(lb.module)
+  return changed
+}
 function loadBubbleConfig(provider) {
   try {
     const parsed = JSON.parse(fs.readFileSync(bubbleConfigFile(provider), 'utf8'))
-    if (parsed && parsed.v === 1) return parsed
+    if (parsed && parsed.v === 1) {
+      // GLM：把旧默认的单个峰谷块升级成 DS 同版型的一对（用户改过则不动）
+      if (provider === 'glm' && migrateGlmPeak(parsed)) writeBubbleConfig(provider, parsed)
+      return parsed
+    }
   } catch (err) {}
   return null
 }
