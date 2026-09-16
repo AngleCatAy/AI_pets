@@ -772,7 +772,7 @@ const PATCHES = [
       '    // GLM 专属句（占位，用户可在语句编辑器里改写/增删）',
       '    var DSHWV_GLM_LINES = [',
       '      { t: "GLM 娘待命中，有什么要跑的吗～", w: 3, bold: true, size: 11, glm: true },',
-      '      { t: "Coding Plan 余额充足，放心造～", w: 3, bold: true, glm: true },',
+      '      { t: "雷霆大思考ing……", w: 3, bold: true, glm: true },',
       '      { t: "代码有我在，跑不偏的...大概。", w: 3, bold: true, glm: true },',
       '    ]',
       '    // 两档池：ds = 通用 + DS 专属；glm = 通用 + GLM 专属',
