@@ -195,6 +195,15 @@
   window.addEventListener('pointerdown', function (e) {
     pointing = true
     setIgnore(false)
+    // 点进文本输入控件 = 用户要打字 → 这时才切窗口可聚焦（并补 focus/select）；
+    // 点在别的控件上 → 立刻交还焦点（不依赖 focusout：实测 blur() 在桌面窗口里
+    // 不一定触发 focusout，靠它释放会漏）
+    if (isTextInput(e.target)) {
+      setFocusable(true)
+      focusInputSoon(e.target)
+    } else {
+      setFocusable(false)
+    }
     if (e.button === 0 && isWhaleHit(e.clientX, e.clientY)) {
       clickStart = { x: e.clientX, y: e.clientY }
     } else {
@@ -357,26 +366,75 @@
   setInterval(report, 5000)
   setTimeout(report, 1500)
 
-  // 菜单和模态弹层里都有文本输入框，而窗口默认 focusable:false —— 那种窗口
-  // 永远拿不到键盘焦点，输入框就是打不进字。所以「菜单或任何弹层打开」期间
-  // 临时把窗口切成可聚焦，全部关掉再切回来，这样"点鲸鱼不抢你当前应用焦点"
-  // 的默认行为不变。
-  var menuEl = document.querySelector('.dshwv-menu')
+  // -------------------------------------------------------------------------
+  // 键盘输入：按需聚焦（不能一开菜单就抢焦点）
+  //
+  // 窗口默认 focusable:false（点角色不抢你当前应用焦点），但那种窗口拿不到
+  // 键盘焦点，菜单/弹层里的文本框就完全打不进字。
+  //
+  // 早先的规则是「菜单或弹层一打开就 setFocusable(true)+focus()」——问题是
+  // Windows 上这会把前台窗口（比如编辑器）挤下去，而且关掉后**不会自动还回去**，
+  // 用户表现为"点一下桌宠，别的窗口就卡住，得再点一下才恢复"。而菜单里绝大多数
+  // 操作（大小/音量/音效/开关）根本不需要打字。
+  //
+  // 所以改成**只在真的点进文本输入控件时**才切可聚焦：那是用户明确要打字的时刻，
+  // 抢焦点符合预期；其余交互全程保持不抢焦点。
+  // -------------------------------------------------------------------------
+
+  function isTextInput(el) {
+    if (!el) return false
+    var tag = (el.tagName || '').toLowerCase()
+    if (tag === 'textarea') return true
+    if (tag === 'input') {
+      var t = String(el.type || 'text').toLowerCase()
+      return t !== 'checkbox' && t !== 'radio' && t !== 'range' && t !== 'file' &&
+        t !== 'button' && t !== 'submit' && t !== 'reset' && t !== 'color'
+    }
+    return el.isContentEditable === true
+  }
+
   var lastFocusable = null
-  function refreshFocusable() {
-    var want = !!(menuEl && menuEl.classList.contains('dshwv-menu-open')) || anyModalOpen()
-    if (want === lastFocusable) return
-    lastFocusable = want
+  function setFocusable(on) {
+    if (on === lastFocusable) return
+    lastFocusable = on
     try {
-      host.setFocusable(want)
+      host.setFocusable(on)
     } catch (err) {}
   }
 
+  // 切到可聚焦后 Chromium 才认键盘；元素焦点可能在窗口激活之前就错过了，
+  // 所以隔一小会儿再补一次 focus/select（文本框聚焦即全选，防新旧拼接）。
+  function focusInputSoon(el) {
+    var tries = [60, 200, 450]
+    tries.forEach(function (delay) {
+      setTimeout(function () {
+        try {
+          el.focus()
+          var t = String(el.type || '').toLowerCase()
+          if (el.select && (t === 'text' || t === 'password' || t === 'number' || t === 'search')) el.select()
+        } catch (err) {}
+      }, delay)
+    })
+  }
+
+  if (window.MutationObserver) {
+    // 输入控件获得/失去 DOM 焦点时同步窗口可聚焦状态（Tab 键切换、点空白失焦都覆盖）
+    document.addEventListener('focusin', function (e) {
+      if (isTextInput(e.target)) setFocusable(true)
+    }, true)
+    document.addEventListener('focusout', function () {
+      setTimeout(function () {
+        var active = document.activeElement
+        if (!isTextInput(active)) setFocusable(false)
+      }, 0)
+    }, true)
+  }
+
+  var menuEl = document.querySelector('.dshwv-menu')
   if (menuEl && window.MutationObserver) {
     var lastMenuOpen = false
     new MutationObserver(function () {
       var isOpen = menuEl.classList.contains('dshwv-menu-open')
-      refreshFocusable()
       if (isOpen === lastMenuOpen) return
       lastMenuOpen = isOpen
       if (!isOpen) return
@@ -400,9 +458,9 @@
   }
 
   // 弹层的开合不走菜单那个 class 开关：有的靠 display 切换、有的整节点增删。
-  // 盯 body 的子树变化（防抖 60ms），弹层一打开就切可聚焦 + 立即取消穿透
+  // 盯 body 的子树变化（防抖 60ms），弹层一打开就立即取消穿透
   // （不等 mousemove——打开弹层的那次点击之后鼠标可能不动）；
-  // 关掉后按最后已知指针位置重算穿透。
+  // 关掉后按最后已知指针位置重算穿透。焦点不在这里动（见上面的按需聚焦）。
   if (window.MutationObserver) {
     var modalDebounce = null
     var lastModalOpen = false
@@ -411,7 +469,6 @@
       modalDebounce = setTimeout(function () {
         modalDebounce = null
         var open = anyModalOpen()
-        refreshFocusable()
         if (open === lastModalOpen) return
         lastModalOpen = open
         if (open) {

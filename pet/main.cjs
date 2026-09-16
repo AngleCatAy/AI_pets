@@ -459,8 +459,10 @@ ipcMain.on('pet:set-open-at-login', (event, on) => {
 })
 
 // 窗口默认 focusable:false，好处是点鲸鱼不会把你正在用的应用抢走焦点。
-// 但那样的窗口永远拿不到键盘焦点，菜单里那个 API Key 输入框就完全打不进字。
-// 所以菜单开合时临时切成可聚焦，关掉再切回去。
+// 但那样的窗口永远拿不到键盘焦点，菜单/弹层里的输入框就完全打不进字。
+// 页面侧（adapter）只在**真的点进文本输入控件**时才请求切成可聚焦——早先是
+// 「菜单/弹层一打开就切」，Windows 上会把前台窗口挤下去且不会自动还回去
+// （用户实测：点一下桌宠，别的窗口就像卡住了）。
 ipcMain.on('pet:set-focusable', (event, on) => {
   if (!win || win.isDestroyed()) return
   try {
@@ -470,8 +472,11 @@ ipcMain.on('pet:set-focusable', (event, on) => {
       win.focus()
     } else {
       win.setFocusable(false)
+      // 交还焦点：让系统挑下一个前台窗口（通常回到用户刚才在用的那个），
+      // 否则焦点可能留在本窗口上、别的应用看着像"卡住"
+      try { win.blur() } catch (err) {}
     }
-    log('窗口可聚焦 -> ' + (on ? '开（菜单已打开）' : '关（菜单已关闭）') +
+    log('窗口可聚焦 -> ' + (on ? '开（输入框聚焦）' : '关（输入框失焦）') +
         ' isFocusable=' + win.isFocusable())
   } catch (err) {
     log('切换可聚焦失败 ' + err.message)
