@@ -2396,6 +2396,15 @@ const routes = {
   '/dsh-whale/bubble.json': async (req, res) => {
     try {
       const provider = currentProvider()
+      // DELETE = 清掉当前模型的存档（编辑器「重置」用）：GET 会重新返回该模型的
+      // 默认配置。重置必须按模型取默认，而不是把上游出厂默认（DeepSeek 怪话池）
+      // 存进当前模型槽。
+      if (req.method === 'DELETE') {
+        try { fs.rmSync(bubbleConfigFile(provider), { force: true }) } catch (err) {}
+        res.writeHead(200, JSON_HEADERS)
+        res.end(JSON.stringify({ ok: true, config: defaultBubbleConfig(provider) }))
+        return
+      }
       if (req.method === 'POST' || req.method === 'PUT') {
         const parsed = JSON.parse(await readBodyMax(req, 512 * 1024))
         if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.items) || !Array.isArray(parsed.lib)) {

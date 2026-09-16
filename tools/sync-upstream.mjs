@@ -143,6 +143,10 @@ const PATCHES = [
         '              applyRole(found.id, found.name, rurl)',
         '            })',
         '        } catch (err) {}',
+        '      } else {',
+        '        // 首次应用跳过贴图（启动已按最后状态出图，避免闪烁），但角色面板',
+        '        // 可能在这之前就渲染过了（bust 标记带着未知的旧厂商），重渲染一次',
+        '        try { renderRolePanel() } catch (err) {}',
         '      }',
         '      providerAppliedOnce = true',
         '      // 配色：GLM 走黑色系。峰谷的绿/红是行内样式（优先级高于本表），不受影响。',
@@ -651,6 +655,45 @@ const PATCHES = [
       "      // 用户仍可在输入框里改；清空则回落「新角色」\n" +
       "      cropNameInput.value = (fileName || '').replace(/.[^.]+$/, '')",
     why: '导入角色默认命名为文件名（用户要求）',
+  },
+  {
+    // 「默认角色」的缩略图指向 image.png（内容随当前模型变）。面板 DOM 在
+    // 切模型后不会重建，URL 也没变——浏览器不重拉，缩略图还是上一次解码的
+    // 旧图（GLM 下显示 DeepSeek 的图，用户实测）。渲染时带 cache-bust。
+    from: '      thumb.src = r.url',
+    to: '      // 默认角色贴图 = image.png（按当前模型出图）：渲染时带 bust，否则\n' +
+      '      // 面板复用旧 DOM、URL 不变，切模型后缩略图仍是上一次的旧图\n' +
+      "      thumb.src = r.id === 'default'\n" +
+      "        ? r.url + (r.url.indexOf('?') >= 0 ? '&' : '?') + 'rk=' + state.provider + '-' + Date.now()\n" +
+      '        : r.url',
+    why: '角色按模型保存后，默认角色缩略图必须跟随当前模型重拉（GLM 下显示 GLM 娘）',
+  },
+  {
+    // 泡泡编辑器「重置」按模型取默认：删掉当前模型的存档（DELETE），服务端
+    // 返回该模型的默认配置。原实现把上游出厂默认（DeepSeek 怪话池）灌进内存，
+    // 一旦保存就污染当前模型槽。重置即生效（删档已落盘），确认文案同步说明。
+    from: "function bubbleEditorReset() {\n" +
+      "  showConfirm('恢复为默认序列(首次=余额内容,再次=随机语句)?', function () {\n" +
+      "    bubbleEditItems = bubbleDefaultQueue()\n" +
+      "    renderBubbleEditor()\n" +
+      "  })\n" +
+      '}',
+    to: "function bubbleEditorReset() {\n" +
+      "  showConfirm('恢复为当前模型的默认序列?(立即生效)', function () {\n" +
+      "    fetch('/dsh-whale/bubble.json', { method: 'DELETE' })\n" +
+      "      .then(function (r) { return r.json() })\n" +
+      "      .then(function (d) {\n" +
+      "        if (d && d.ok && d.config) {\n" +
+      "          bubbleCfg = d.config\n" +
+      "          bubbleLib = (d.config.lib && Array.isArray(d.config.lib)) ? JSON.parse(JSON.stringify(d.config.lib)) : []\n" +
+      "          bubbleTapAdvance = d.config.tapAdvance === true\n" +
+      "        }\n" +
+      "        openBubbleEditor()\n" +
+      "      })\n" +
+      "      .catch(function () { openBubbleEditor() })\n" +
+      "  })\n" +
+      '}',
+    why: '泡泡配置按模型保存：编辑器重置改为恢复当前模型的默认序列（DELETE 存档），不再灌上游 DeepSeek 出厂默认',
   },
 ]
 
