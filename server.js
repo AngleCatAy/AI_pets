@@ -1184,7 +1184,11 @@ function bubbleDefaultItemsGlm() {
         { type: 'text', text: 'GLM余额', size: 8, bold: true, rgb: '', ul: false, italic: false, color: '' },
         { type: 'balance', size: 20, rgb: 'indigo', color: '', tpl: '{balance_ds}', bgRgb: '', bg: '', fontFamily: '', bold: false },
         { type: 'today', size: 4, color: '#9fb0d9', tpl: '周配额已用 {expense_ds}' },
-        { type: 'peak', size: 4, bold: true, peakColor: '#e0433f', offColor: '#2fa24c', peakRgb: 'rouge', offRgb: 'bamboo', peakStyle: 'default', tpl: '{status}' },
+        // 峰谷与 DeepSeek 同版型：mini 状态块（峰=rouge 底/谷=bamboo 底）跟在
+        // 倒计时前一格，两者 row 键相同 → 并成一行，显示成「峰 02:16:10」。
+        // 倒计时按模型算（widget 里 bubbleCountdownIsPeak 已按 provider 分支）。
+        { type: 'peak', size: 2, peakColor: '#ffffff', offColor: '#ffffff', tpl: '{status}', peakRgb: '', offRgb: '', peakBgRgb: 'rouge', peakBg: '', offBgRgb: 'bamboo', offBg: '', peakStyle: 'mini', bold: true, row: 4, fontFamily: '"Microsoft YaHei",sans-serif' },
+        { type: 'peak', size: 4, bold: true, peakColor: '#e0433f', offColor: '#2fa24c', peakRgb: 'rouge', offRgb: 'bamboo', peakStyle: 'count', tpl: '{countdown}', row: 4, fontFamily: '', italic: false, ul: true },
       ],
     },
   ]
