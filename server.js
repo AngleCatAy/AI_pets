@@ -224,6 +224,18 @@ function soundSetFromUrl(url) {
   }
 }
 
+// 通用取 query 参数（0.3.0 起不少路由靠 id 选资源：role-image.png / bubble-img.png /
+// audio-fragment.wav 都是 ?id=xxx 的形式）
+function urlParam(url, name) {
+  try {
+    const q = String(url || '').split('?')[1] || ''
+    const m = new RegExp('(?:^|&)' + name + '=([^&]*)').exec(q)
+    return m ? decodeURIComponent(m[1]) : ''
+  } catch (err) {
+    return ''
+  }
+}
+
 function pickBalanceInfo(infos) {
   if (!Array.isArray(infos) || infos.length === 0) return null
   const num = (x) => (x && x.total_balance !== undefined ? Number(x.total_balance) : NaN)
@@ -731,6 +743,40 @@ function readBody(req) {
   })
 }
 
+// ---------------------------------------------------------------------------
+// 泡泡图片库（上游 0.3.0 新增的「图片 / 随机图片」泡泡模块用）
+//
+// 内置两张随包发布的 gif。id 必须与前端默认泡泡配置里的 imgId 一致
+// （上游 lib/index.js 里就是这么定义的），否则默认泡泡会显示破图。
+// 用户自己上传的图（bubble-img-upload.json）后续加在这里。
+// ---------------------------------------------------------------------------
+
+const BUBBLE_BUILTIN_IMGS = [
+  { id: 'bimg_petpet', name: 'petpet', file: 'bubble-petpet.gif', format: 'gif' },
+  { id: 'bimg_money1', name: 'money1', file: 'bubble-money1.gif', format: 'gif' },
+]
+
+function bubbleImgPayload() {
+  return {
+    ok: true,
+    images: BUBBLE_BUILTIN_IMGS.map((b) => ({
+      id: b.id,
+      name: b.name,
+      format: b.format,
+      url: '/dsh-whale/bubble-img.png?id=' + encodeURIComponent(b.id),
+      createdAt: null,
+      builtin: true,
+    })),
+  }
+}
+
+function bubbleImgBytes(id) {
+  const item = BUBBLE_BUILTIN_IMGS.find((b) => b.id === id)
+  if (!item) return null
+  const bytes = readFirst([path.join(ROOT, 'assets', item.file)])
+  return bytes ? { bytes: bytes, mime: item.format === 'gif' ? 'image/gif' : 'image/png' } : null
+}
+
 function sendBytes(res, bytes, type) {
   res.writeHead(200, {
     'Content-Type': type,
@@ -808,6 +854,18 @@ const routes = {
     } catch (err) {
       sendNotFound(res, 'rua gif unavailable: ' + err.message)
     }
+  },
+
+  // 泡泡图片库：默认泡泡配置的第二泡就会用到（图片模块 + 随机图片模块）
+  '/dsh-whale/bubble-imgs.json': (req, res) => {
+    res.writeHead(200, JSON_HEADERS)
+    res.end(JSON.stringify(bubbleImgPayload()))
+  },
+
+  '/dsh-whale/bubble-img.png': (req, res) => {
+    const hit = bubbleImgBytes(urlParam(req.url, 'id'))
+    if (!hit) return sendNotFound(res, 'bubble image unavailable')
+    sendBytes(res, hit.bytes, hit.mime)
   },
 
   '/dsh-whale/sound/press.mp3': (req, res) => {
