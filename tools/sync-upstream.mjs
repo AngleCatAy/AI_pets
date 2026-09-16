@@ -814,6 +814,73 @@ const PATCHES = [
     why: '余额预警/今日预算是金额口径，GLM（配额百分比）下必须跳过，否则误报 DS 文案',
   },
   {
+    // GLM 配额预警：金额口径的余额预警/预算对配额制不适用（见上一条），
+    // GLM 用百分比阈值单独一套。两个字段的语义：
+    //   state.balance    = GLM 的 totalBalance = 5 小时窗**剩余** %
+    //   state.todayUsage = GLM 的 todayUsage  = 周配额**已用** %（所以要 100−x）
+    // 文案里的 {left} 是「当前实际剩余百分比」，在调用前就地替换——
+    // 不去扩 usageFillText（它只管 {below}/{amount}/{cost}，改它会影响所有调用方）。
+    from: "function checkUsageAlerts(balance, todayUsage) {\n" +
+      '  try {\n' +
+      '    // 金额口径的提醒只对 DeepSeek 生效；GLM 的配额百分比不能跟钱比大小\n' +
+      "    if (state.provider !== 'deepseek') return",
+    to: '// GLM 配额预警：5 小时窗剩余 / 周窗剩余 各自低于阈值时提醒（金额口径的\n' +
+      '// 余额预警与今日预算在 GLM 下不适用，见 checkUsageAlerts 的守卫）\n' +
+      'var glmFiveHourFired = false\n' +
+      'var glmWeeklyFired = false\n' +
+      'function glmQuotaLines(cfg, leftText) {\n' +
+      '  var out = []\n' +
+      '  var src = usageRemindLinesOf(cfg, true)\n' +
+      '  for (var i = 0; i < src.length; i++) {\n' +
+      '    var cp = JSON.parse(JSON.stringify(src[i] || {}))\n' +
+      '    if (typeof cp.text === \'string\') cp.text = cp.text.replace(/\\{left\\}/g, String(leftText))\n' +
+      '    out.push(cp)\n' +
+      '  }\n' +
+      '  return out\n' +
+      '}\n' +
+      'function checkGlmQuotaAlerts(balance, todayUsage) {\n' +
+      '  try {\n' +
+      "    if (state.provider !== 'glm') return\n" +
+      '    if (!usageSet) return\n' +
+      '    var g = usageSet.glmAlert\n' +
+      '    if (!g || !g.on) return\n' +
+      '    var five = Number(balance)\n' +
+      '    var fiveBelow = Number(g.fiveHourBelow)\n' +
+      '    if (isFinite(five) && isFinite(fiveBelow) && five > 0 && five <= fiveBelow) {\n' +
+      '      if (!glmFiveHourFired) {\n' +
+      '        glmFiveHourFired = true\n' +
+      "        showUsagePopup('额度预警', glmQuotaLines(g.fiveHour, Math.round(five) + '%'), fiveBelow, null, 2, g.fiveHour)\n" +
+      '      }\n' +
+      '    } else if (isFinite(five) && isFinite(fiveBelow) && five > fiveBelow) {\n' +
+      '      glmFiveHourFired = false\n' +
+      '    }\n' +
+      '    var weekUsed = Number(todayUsage)\n' +
+      '    var weekLeft = isFinite(weekUsed) ? 100 - weekUsed : NaN\n' +
+      '    var weekBelow = Number(g.weeklyBelow)\n' +
+      '    if (isFinite(weekLeft) && isFinite(weekBelow) && weekLeft > 0 && weekLeft <= weekBelow) {\n' +
+      '      if (!glmWeeklyFired) {\n' +
+      '        glmWeeklyFired = true\n' +
+      "        showUsagePopup('额度预警', glmQuotaLines(g.weekly, Math.round(weekLeft) + '%'), weekBelow, null, 2, g.weekly)\n" +
+      '      }\n' +
+      '    } else if (isFinite(weekLeft) && isFinite(weekBelow) && weekLeft > weekBelow) {\n' +
+      '      glmWeeklyFired = false\n' +
+      '    }\n' +
+      '  } catch (err) {}\n' +
+      '}\n' +
+      'function checkUsageAlerts(balance, todayUsage) {\n' +
+      '  try {\n' +
+      '    // 金额口径的提醒只对 DeepSeek 生效；GLM 的配额百分比不能跟钱比大小\n' +
+      "    if (state.provider !== 'deepseek') return",
+    why: 'GLM 配额预警（5 小时窗 / 周窗剩余低于阈值），文案与 DS 预警同风格',
+  },
+  {
+    // 余额响应里同时驱动两套提醒检查（各自内部按厂商守卫）
+    from: '        checkUsageAlerts(nb, state.todayUsage)',
+    to: '        checkUsageAlerts(nb, state.todayUsage)\n' +
+      '        checkGlmQuotaAlerts(nb, state.todayUsage)',
+    why: 'GLM 配额预警接入余额刷新链路',
+  },
+  {
     // 渲染过滤（泡泡主渲染器）：随机语句模块按当前模型过滤行作用域。
     // _lastPick 从下标改为行对象引用（过滤后下标语义会漂移，对象引用稳定）。
     from: "function bubbleModuleText(m, avoidIdx) {\n" +

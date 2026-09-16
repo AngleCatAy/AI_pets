@@ -1263,6 +1263,33 @@ function usageSettingsDefaults() {
         { type: 'today', size: 2, tpl: '今日已用 {expense_ds}', bold: false, rgb: '', color: '#ffffff', bgRgb: 'indigo', bg: '' },
       ],
     },
+    // GLM 配额预警（按模型分档）：金额口径的余额预警/预算对配额制不适用，
+    // GLM 单独一套——5 小时窗剩余 % 与周窗剩余 % 各自低于阈值时提醒。
+    // 样式与 DeepSeek 的预警一致（字号 5、加粗、数字 rouge 红、两行排版）。
+    // {left} = 当前实际剩余百分比（前端调用前就地替换）；{below} = 该条阈值百分比。
+    glmAlert: {
+      on: true,
+      fiveHourBelow: 20,
+      weeklyBelow: 20,
+      fiveHour: {
+        // 自动关闭：两条可能同时命中，而系统泡泡队列在「不自动关闭」时永不推进
+        // （第一条一直挂着，第二条轮不到）。给 TTL 让队列依次播完两条。
+        autoClose: true, ttlSec: 8,
+        lines: [
+          { type: 'text', text: '老大，额度只剩', size: 5, bold: true },
+          { type: 'text', text: '{left}', size: 5, bold: true, rgb: 'rouge', color: '', bgRgb: '', bg: '', row: 2 },
+          { type: 'text', text: '了喵，要累似了喵', size: 5, bold: true, row: 2 },
+        ],
+      },
+      weekly: {
+        autoClose: true, ttlSec: 8,
+        lines: [
+          { type: 'text', text: '老大周额度不到', size: 5, bold: true },
+          { type: 'text', text: '{below}%', size: 5, bold: true, rgb: 'rouge', row: 2 },
+          { type: 'text', text: '了喵，看我来个雷霆大思考……', size: 5, bold: true, row: 2 },
+        ],
+      },
+    },
   }
 }
 
@@ -1274,6 +1301,12 @@ function readUsageSettings() {
   if (s.alert && typeof s.alert === 'object') d.alert = Object.assign({}, d.alert, s.alert)
   if (s.budget && typeof s.budget === 'object') d.budget = Object.assign({}, d.budget, s.budget)
   if (s.turnCost && typeof s.turnCost === 'object') d.turnCost = Object.assign({}, d.turnCost, s.turnCost)
+  // GLM 配额预警：fiveHour/weekly 各自再合并一层（只存了其中一条时不会把另一条冲掉）
+  if (s.glmAlert && typeof s.glmAlert === 'object') {
+    d.glmAlert = Object.assign({}, d.glmAlert, s.glmAlert)
+    if (s.glmAlert.fiveHour) d.glmAlert.fiveHour = Object.assign({}, usageSettingsDefaults().glmAlert.fiveHour, s.glmAlert.fiveHour)
+    if (s.glmAlert.weekly) d.glmAlert.weekly = Object.assign({}, usageSettingsDefaults().glmAlert.weekly, s.glmAlert.weekly)
+  }
   // 每个模型各自的提醒/预算/手动额度：内置 DeepSeek 沿用顶层（旧配置零迁移，上游同款）
   const byModel = s.models && typeof s.models === 'object' ? s.models : {}
   const qDef = () => ({ on: false, mode: 'auto', total: 0, unit: 'tokens', used: 0, reset: 'none', baseAt: 0 })
@@ -1298,6 +1331,7 @@ function writeUsageSettings(patch) {
   if (p.alert && typeof p.alert === 'object') led.settings.alert = Object.assign({}, led.settings.alert || {}, p.alert)
   if (p.budget && typeof p.budget === 'object') led.settings.budget = Object.assign({}, led.settings.budget || {}, p.budget)
   if (p.turnCost && typeof p.turnCost === 'object') led.settings.turnCost = Object.assign({}, led.settings.turnCost || {}, p.turnCost)
+  if (p.glmAlert && typeof p.glmAlert === 'object') led.settings.glmAlert = Object.assign({}, led.settings.glmAlert || {}, p.glmAlert)
   if (p.modelSettings && p.modelSettings.id) {
     const mid = String(p.modelSettings.id)
     led.settings.models = led.settings.models && typeof led.settings.models === 'object' ? led.settings.models : {}
