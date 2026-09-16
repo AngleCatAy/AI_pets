@@ -442,7 +442,7 @@ function readSizeConfig() {
     parsed = null
   }
   if (!parsed || typeof parsed.scale !== 'number') return null
-  return {
+  const cfg = {
     scale: parsed.scale,
     sound: parsed.sound !== false,
     vol: typeof parsed.vol === 'number' ? parsed.vol : 0.9,
@@ -462,6 +462,15 @@ function readSizeConfig() {
     // 多厂商：deepseek=余额/今日已用，glm=Coding Plan 配额
     provider: parsed.provider === 'glm' ? 'glm' : 'deepseek',
   }
+  // 角色按模型各存一套（配置锚点=模型）；role 是「当前模型」那份的便捷展平。
+  // 缺省 default = 自带贴图（image.png 按当前模型动态出图）。
+  const rolesRaw = parsed.roles && typeof parsed.roles === 'object' ? parsed.roles : {}
+  cfg.roles = {
+    deepseek: typeof rolesRaw.deepseek === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(rolesRaw.deepseek) ? rolesRaw.deepseek : 'default',
+    glm: typeof rolesRaw.glm === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(rolesRaw.glm) ? rolesRaw.glm : 'default',
+  }
+  cfg.role = cfg.roles[cfg.provider]
+  return cfg
 }
 
 // 收一个对象而不是一长串位置参数。字段为 undefined 时沿用已存的值——
@@ -499,6 +508,18 @@ function writeSizeConfig(input) {
     autoPopMs: typeof autoRaw === 'number' && autoRaw > 0 ? Math.round(autoRaw) : 0,
     provider: providerRaw === 'glm' ? 'glm' : 'deepseek',
   }
+  // 角色按模型各存一套（配置锚点=模型）：{role} 只落到「当前模型」的槽位。
+  // 挂件切角色时只上报 {role}，scale 等沿用已存值——各模型互不覆盖。
+  const prevRoles = prev.roles && typeof prev.roles === 'object' ? prev.roles : {}
+  const roles = {
+    deepseek: typeof prevRoles.deepseek === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(prevRoles.deepseek) ? prevRoles.deepseek : 'default',
+    glm: typeof prevRoles.glm === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(prevRoles.glm) ? prevRoles.glm : 'default',
+  }
+  if (typeof p.role === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(p.role)) {
+    roles[cfg.provider] = p.role
+  }
+  cfg.roles = roles
+  cfg.role = roles[cfg.provider]
 
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -788,36 +809,29 @@ function defaultRolesIndex() {
   return {
     version: 1,
     roles: [
-      // pinnedAt=1 作为置顶基线（上游同款）：任何后来置顶（Date.now()）都排在它上面
-      { id: ROLE_DEFAULT_ID, name: '大肥鱼', pinnedAt: 1, createdAt: 0 },
+      // pinnedAt=1 作为置顶基线（上游同款）：任何后来置顶（Date.now()）都排在它上面。
+      // default = 自带贴图（image.png 按当前模型动态出图），显示名固定「默认角色」
+      { id: ROLE_DEFAULT_ID, name: '默认角色', pinnedAt: 1, createdAt: 0 },
     ],
   }
 }
 
-// 预置角色：id -> { name, source }。图片在 seed 时从随包 assets 拷进角色目录，
-// 之后就是普通自定义角色（可改名旁路没有——上游没有改名的 action，保持一致）。
-const PRESET_ROLES = {
-  glm: { name: 'GLM娘', source: path.join(ROOT, 'assets', 'personas', 'glm', 'character.png') },
-}
-
+// 首次运行只写默认索引（default = 各模型自带贴图，无预置自定义角色）
 function seedRoles() {
   const dir = pickRoleDir()
   const index = defaultRolesIndex()
-  for (const id of Object.keys(PRESET_ROLES)) {
-    const preset = PRESET_ROLES[id]
-    const dest = path.join(dir, id + '.png')
-    try {
-      if (!fs.existsSync(dest)) fs.copyFileSync(preset.source, dest)
-      index.roles.push({ id: id, name: preset.name, format: 'png', pinnedAt: null, createdAt: 1 })
-    } catch (err) {
-      console.error('[ds-pet] 预置角色 ' + id + ' 拷贝失败: ' + err.message)
-    }
-  }
   try {
     fs.writeFileSync(path.join(dir, 'roles.json'), JSON.stringify(index, null, 2), 'utf8')
   } catch (err) {}
   return index
 }
+
+// 角色按模型保存（配置锚点=模型）：default = 各模型的自带贴图
+//（DeepSeek=蓝色小人 DSniang、GLM=GLM娘，由 image.png 按当前模型出图），
+// 导入的角色进入全局角色库，但「当前用哪个」按模型记在 size.json 的 roles 槽位。
+// 曾经预置过一个 glm 自定义角色，在按模型设计下与 GLM 自带贴图重复，已废弃
+// （readRolesIndex 里对旧索引做一次性迁移清理）。
+const LEGACY_PRESET_ROLE_IDS = ['glm']
 
 function readRolesIndex() {
   const file = path.join(pickRoleDir(), 'roles.json')
@@ -828,11 +842,25 @@ function readRolesIndex() {
       if (!parsed.roles.some((r) => r && r.id === ROLE_DEFAULT_ID)) {
         parsed.roles.unshift(defaultRolesIndex().roles[0])
       }
+      // default 显示名固定「默认角色」：没有改名接口，旧索引里的历史名（如「大肥鱼」）
+      // 在这里一并归一，保证 UI 文案与用户拍板的一致
+      const def = parsed.roles.find((r) => r && r.id === ROLE_DEFAULT_ID)
+      if (def && def.name !== '默认角色') def.name = '默认角色'
+      // 一次性迁移：剔除废弃的预置角色（连同其图片文件）
+      const legacy = parsed.roles.filter((r) => r && LEGACY_PRESET_ROLE_IDS.includes(r.id))
+      if (legacy.length) {
+        parsed.roles = parsed.roles.filter((r) => !LEGACY_PRESET_ROLE_IDS.includes(r.id))
+        writeRolesIndex(parsed)
+        for (const r of legacy) {
+          const fmt = r.format === 'gif' || r.format === 'apng' ? r.format : 'png'
+          const p = roleFilePath(r.id, fmt)
+          if (p) { try { fs.unlinkSync(p) } catch (err) {} }
+        }
+      }
       return parsed
     }
   } catch (err) {
-    // 索引不存在（首次运行）：写入预置角色并返回完整索引（含预置项，
-    // 否则第一次 GET 会看不到刚 seed 的角色）
+    // 索引不存在（首次运行）：写入默认索引并返回完整索引
     return seedRoles()
   }
   return defaultRolesIndex()
@@ -2329,11 +2357,11 @@ const routes = {
         const body = await readBody(req)
         const parsed = JSON.parse(body)
         const prevCfg = readSizeConfig()
-        const scale = typeof parsed.scale === 'number' ? parsed.scale : (prevCfg ? prevCfg.scale : null)
-        if (scale === null) {
-          res.writeHead(400, JSON_HEADERS)
-          res.end(JSON.stringify({ ok: false, error: 'missing scale' }))
-          return
+        // 缺 scale 时引导默认值 1（与挂件缺省一致）：角色上报（applyRole 的
+        // {role} PUT）和主进程的 {provider} 切换包都不带 scale，全新安装还
+        // 没有任何存档时不能拿「missing scale」把整个写入拒掉
+        if (typeof parsed.scale !== 'number') {
+          parsed.scale = prevCfg && typeof prevCfg.scale === 'number' ? prevCfg.scale : 1
         }
         // 用量模式或厂商变化时让余额缓存失效，下次请求立即按新模式/新厂商计算
         if (typeof parsed.usageMode === 'string' || typeof parsed.provider === 'string') {

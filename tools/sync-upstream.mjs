@@ -78,6 +78,7 @@ const PATCHES = [
         '// 口子，其余内部状态仍然保持私有。',
         '// 另外附带 applyProvider（v2.0 多厂商换贴图/换配色）。',
         'var appliedProvider = null',
+        'var providerAppliedOnce = false',
         'window.__dshWhaleApi = {',
         '  showRandomLine: function () {',
         '    try {',
@@ -119,23 +120,31 @@ const PATCHES = [
         '      // 记账入口只对 DeepSeek 有意义（余额差记账）；GLM 是配额制，',
         '      // 整条底部动作行（小鲸鱼记账/返回）按厂商显隐。',
         "      try { usageNavRow.style.display = want === 'glm' ? 'none' : '' } catch (err) {}",
-        '      // 用户在角色系统里锁定了自定义角色时，贴图不跟随厂商切（尊重锁定）；',
-        '      // 只有 default（= 跟随当前厂商出图）才换 image.png 并重建命中遮罩。',
-        '      var lockedRole = null',
-        '      try { lockedRole = localStorage.getItem("dshw-role") } catch (err) {}',
-        '      if (lockedRole && lockedRole !== "default") return true',
-        "      var bust = '/dsh-whale/image.png?p=' + want + '-' + Date.now()",
-        '      img.src = bust',
-        '      hitReady = false',
-        '      hitCanvas = document.createElement("canvas")',
-        '      hitCanvas.width = 610',
-        '      hitCanvas.height = 610',
-        '      var probe = new Image()',
-        '      probe.onload = function () {',
-        '        try { hitCanvas.getContext("2d").drawImage(probe, 0, 0, 610, 610); hitReady = true } catch (err) {}',
+        '      // 贴图按「当前模型保存的角色」走（服务端权威，size.json 的 roles.<model>）：',
+        '      // 切模型 = 应用该模型保存的角色；角色是 default（自带贴图）时带 cache-bust',
+        '      // ——image.png 的内容随模型变了而 URL 没变，不加参数浏览器不会重拉。',
+        '      // 首次应用跳过：启动时 initRoleUrl 已按 localStorage 的最后状态出图，',
+        '      // 且此时 roleList 可能还没加载完。',
+        '      if (providerAppliedOnce) {',
+        '        try {',
+        '          fetch("/dsh-whale/size.json", { cache: "no-store" })',
+        '            .then(function (r) { return r.json() })',
+        '            .then(function (d) {',
+        "              var rid = d && typeof d.role === 'string' && d.role ? d.role : 'default'",
+        '              var found = null',
+        '              for (var ri = 0; ri < roleList.length; ri++) {',
+        '                if (roleList[ri].id === rid) found = roleList[ri]',
+        '              }',
+        '              if (!found) found = { id: "default", name: "默认角色", url: IMG_URL }',
+        '              // IMG_URL 自带查询串（?v=2），bust 参数要按有无 ? 选 & 或 ?',
+        '              var rurl = found.id === \'default\'',
+        '                ? IMG_URL + (IMG_URL.indexOf("?") >= 0 ? "&" : "?") + "p=" + want + "-" + Date.now()',
+        '                : found.url',
+        '              applyRole(found.id, found.name, rurl)',
+        '            })',
+        '        } catch (err) {}',
         '      }',
-        '      probe.onerror = function () {}',
-        '      probe.src = bust',
+        '      providerAppliedOnce = true',
         '      // 配色：GLM 走黑色系。峰谷的绿/红是行内样式（优先级高于本表），不受影响。',
         '      var THEME_ID = "dshwv-theme-glm"',
         '      var old = document.getElementById(THEME_ID)',
@@ -598,11 +607,50 @@ const PATCHES = [
       '    }\n' +
       "    if (d && typeof d.provider === 'string') {\n" +
       "      state.provider = d.provider === 'glm' ? 'glm' : 'deepseek'\n" +
+      '      // 角色按模型存：服务端是权威，回显同步进 localStorage（挂件恢复与\n' +
+      '      // initRoleUrl 快速路径读它；loadRoles 完成后会按它校正）\n' +
+      "      if (typeof d.role === 'string' && d.role) {\n" +
+      "        try { localStorage.setItem('dshw-role', d.role) } catch (err) {}\n" +
+      '      }\n' +
       '      if (window.__dshWhaleApi && window.__dshWhaleApi.applyProvider) {\n' +
       '        window.__dshWhaleApi.applyProvider(d.provider)\n' +
       '      }\n' +
       '    }',
-    why: '多厂商：厂商改从 size.json（设置）读取并应用，不再依赖余额响应里有没有 provider',
+    why: '多厂商：厂商改从 size.json（设置）读取并应用，不再依赖余额响应里有没有 provider；' +
+      '角色按模型存，回显时同步权威值',
+  },
+  {
+    // 角色按模型保存：切角色即上报，服务端落到「当前模型」的角色槽位
+    //（size.json 的 roles.<model>）。切到别的模型再切回来，贴图跟着走。
+    // PUT 不带 scale 时服务端沿用已存值，其它设置不受影响。
+    from: "function applyRole(id, name, url) {\n" +
+      "  currentRole = { id: id, name: name, url: url }\n" +
+      "  img.src = url\n" +
+      "  setRoleBtnText(name)\n" +
+      "  try { localStorage.setItem('dshw-role', id) } catch (err) {}",
+    to: "function applyRole(id, name, url) {\n" +
+      "  currentRole = { id: id, name: name, url: url }\n" +
+      "  img.src = url\n" +
+      "  setRoleBtnText(name)\n" +
+      "  try { localStorage.setItem('dshw-role', id) } catch (err) {}\n" +
+      "  try {\n" +
+      "    fetch('/dsh-whale/size.json', {\n" +
+      "      method: 'PUT',\n" +
+      "      headers: { 'Content-Type': 'application/json' },\n" +
+      "      body: JSON.stringify({ role: id }),\n" +
+      "    })\n" +
+      "  } catch (err) {}",
+    why: '角色按模型保存：切角色上报服务端，落到当前模型的槽位',
+  },
+  {
+    // 导入角色默认用文件名（去扩展名）当角色名；用户仍可在输入框里改。
+    // 上游默认留空（回落「新角色」），对「按模型管理贴图」的用法不友好。
+    from: "      // 名称默认留空，以便显示占位文本「角色名称」；确认时为空则回落为「新角色」\n" +
+      "      cropNameInput.value = ''",
+    to: "      // 角色名默认用导入的文件名（去扩展名；超长由输入框 maxLength 截断），\n" +
+      "      // 用户仍可在输入框里改；清空则回落「新角色」\n" +
+      "      cropNameInput.value = (fileName || '').replace(/.[^.]+$/, '')",
+    why: '导入角色默认命名为文件名（用户要求）',
   },
 ]
 
