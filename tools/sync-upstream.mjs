@@ -798,6 +798,22 @@ const PATCHES = [
     why: '两档随机语句池在泡泡预览里要能区分（显示模块名）',
   },
   {
+    // 余额预警 / 今日预算只对 DeepSeek 有意义——两者都是「金额」口径：
+    // 阈值是 ¥x、默认文案写「你的DS余额」、还带 DeepSeek 充值链接。
+    // GLM 是配额制：totalBalance = 5 小时窗剩余 %，todayUsage = 周配额已用 %。
+    // 不隔离的话拿百分比跟 ¥5 / ¥10 比大小必然误报——用户实测「切到 GLM 就弹
+    // 你的DS余额已经不足¥5」（那个 5 其实是配额百分比小于 5）。
+    from: "function checkUsageAlerts(balance, todayUsage) {\n" +
+      '  try {\n' +
+      '    if (!usageSet) return',
+    to: 'function checkUsageAlerts(balance, todayUsage) {\n' +
+      '  try {\n' +
+      '    // 金额口径的提醒只对 DeepSeek 生效；GLM 的配额百分比不能跟钱比大小\n' +
+      "    if (state.provider !== 'deepseek') return\n" +
+      '    if (!usageSet) return',
+    why: '余额预警/今日预算是金额口径，GLM（配额百分比）下必须跳过，否则误报 DS 文案',
+  },
+  {
     // 渲染过滤（泡泡主渲染器）：随机语句模块按当前模型过滤行作用域。
     // _lastPick 从下标改为行对象引用（过滤后下标语义会漂移，对象引用稳定）。
     from: "function bubbleModuleText(m, avoidIdx) {\n" +
